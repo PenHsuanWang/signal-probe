@@ -3,6 +3,7 @@
 Runs as a FastAPI BackgroundTask (ADR-002).
 """
 
+import io
 import logging
 import os
 import uuid
@@ -90,10 +91,12 @@ async def run_pipeline(
             processed_df = pl.DataFrame(
                 {"timestamp_s": timestamps, "value": values, "state": states}
             )
+            buf = io.BytesIO()
+            processed_df.write_parquet(buf)
             processed_relative = f"signals/{signal_id}/processed.parquet"
             processed_abs = await _storage.save(
                 processed_relative,
-                processed_df.write_parquet(None),  # type: ignore[arg-type]
+                buf.getvalue(),
             )
 
             # 4. Persist run segments to DB
