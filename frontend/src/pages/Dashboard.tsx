@@ -104,6 +104,7 @@ export default function Dashboard() {
   const [macroData, setMacroData] = useState<MacroViewResponse | null>(null);
   const [runChunks, setRunChunks] = useState<RunChunkResponse[]>([]);
   const [loadingMacro, setLoadingMacro] = useState(false);
+  const [macroError, setMacroError] = useState(false);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
 
@@ -120,28 +121,33 @@ export default function Dashboard() {
   useEffect(() => { refreshSignals(); }, [refreshSignals]);
 
   // ── Poll processing signals every 2 s ─────────────────────────────────────
+  // Track whether any signal still needs polling (via ref to avoid restarting
+  // the stable interval on every signals state update).
+  const needsPollRef = useRef(false);
   useEffect(() => {
-    const needsPoll = signals.some(
+    needsPollRef.current = signals.some(
       (s) => s.status === 'PENDING' || s.status === 'PROCESSING'
     );
-    if (needsPoll && !pollingRef.current) {
-      pollingRef.current = setInterval(refreshSignals, 2000);
-    } else if (!needsPoll && pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-    return () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
-  }, [signals, refreshSignals]);
+  }, [signals]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (needsPollRef.current) refreshSignals();
+    }, 2000);
+    pollingRef.current = id;
+    return () => { clearInterval(id); pollingRef.current = null; };
+  }, [refreshSignals]);
 
   // ── Load macro view on signal selection ───────────────────────────────────
   useEffect(() => {
-    if (!selectedId) { setMacroData(null); setRunChunks([]); return; }
+    if (!selectedId) { setMacroData(null); setRunChunks([]); setMacroError(false); return; }
     const sig = signals.find((s) => s.id === selectedId);
-    if (!sig || sig.status !== 'COMPLETED') { setMacroData(null); setRunChunks([]); return; }
+    if (!sig || sig.status !== 'COMPLETED') { setMacroData(null); setRunChunks([]); setMacroError(false); return; }
     setLoadingMacro(true);
+    setMacroError(false);
     getMacroView(selectedId)
-      .then(setMacroData)
-      .catch(() => setMacroData(null))
+      .then((data) => { setMacroData(data); setMacroError(false); })
+      .catch(() => { setMacroData(null); setMacroError(true); })
       .finally(() => setLoadingMacro(false));
   }, [selectedId, signals]);
 
@@ -313,6 +319,24 @@ export default function Dashboard() {
               {selectedSignal?.status === 'PROCESSING' && '⏳ Processing — please wait…'}
               {selectedSignal?.status === 'PENDING' && '⏳ Queued for processing…'}
               {selectedSignal?.status === 'FAILED' && `✗ Failed: ${selectedSignal.error_message ?? 'unknown error'}`}
+              {selectedSignal?.status === 'COMPLETED' && macroError && (
+                <span className="flex flex-col items-center space-y-2">
+                  <span className="text-red-400">⚠ Could not load macro view</span>
+                  <button
+                    onClick={() => {
+                      setMacroError(false);
+                      setLoadingMacro(true);
+                      getMacroView(selectedId!)
+                        .then((data) => { setMacroData(data); setMacroError(false); })
+                        .catch(() => { setMacroData(null); setMacroError(true); })
+                        .finally(() => setLoadingMacro(false));
+                    }}
+                    className="text-brand-400 hover:text-brand-300 underline"
+                  >
+                    Retry
+                  </button>
+                </span>
+              )}
             </div>
           ) : (
             <Plot
