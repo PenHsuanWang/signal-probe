@@ -7,6 +7,7 @@ from app.domain.signal.enums import ProcessingStatus
 
 # ── Upload / List ──────────────────────────────────────────────────────────────
 
+
 class SignalMetadataResponse(BaseModel):
     id: uuid.UUID
     original_filename: str
@@ -22,6 +23,7 @@ class SignalMetadataResponse(BaseModel):
 
 
 # ── Macro view ─────────────────────────────────────────────────────────────────
+
 
 class RunBound(BaseModel):
     run_id: uuid.UUID
@@ -42,6 +44,7 @@ class MacroViewResponse(BaseModel):
 
 
 # ── Run chunk ──────────────────────────────────────────────────────────────────
+
 
 class RunChunkResponse(BaseModel):
     run_id: uuid.UUID

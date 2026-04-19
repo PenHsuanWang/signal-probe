@@ -75,9 +75,7 @@ async def run_pipeline(
         repo = SignalRepository(session)
 
         # Mark as PROCESSING
-        await repo.update_signal_processing(
-            signal_id, ProcessingStatus.PROCESSING
-        )
+        await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
             timestamps, values = _read_signal_file(raw_file_path)
@@ -94,7 +92,8 @@ async def run_pipeline(
             )
             processed_relative = f"signals/{signal_id}/processed.parquet"
             processed_abs = await _storage.save(
-                processed_relative, processed_df.write_parquet(None)  # type: ignore[arg-type]
+                processed_relative,
+                processed_df.write_parquet(None),  # type: ignore[arg-type]
             )
 
             # 4. Persist run segments to DB

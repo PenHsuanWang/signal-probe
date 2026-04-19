@@ -15,8 +15,8 @@ if config.config_file_name is not None:
 # Import ALL models so alembic autogenerate can discover them
 from app.core.config import settings
 from app.db.base import Base
+from app.domain.signal.models import RunSegment, SignalMetadata  # noqa: F401
 from app.domain.user.models import User  # noqa: F401
-from app.domain.signal.models import SignalMetadata, RunSegment  # noqa: F401
 
 # Override placeholder URL from alembic.ini with settings
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

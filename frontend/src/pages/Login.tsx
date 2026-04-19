@@ -27,7 +27,7 @@ export default function Login() {
       });
 
       const token = res.data.access_token;
-      
+
       const userRes = await api.get('/users/me', {
         headers: { Authorization: `Bearer ${token}` }
       });

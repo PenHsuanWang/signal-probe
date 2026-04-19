@@ -1,6 +1,6 @@
 # Signal Probe
 
-**Signal Probe** is a Time-Series Signal Intelligent Exploration Engineering Platform. It is designed to eliminate the "getting lost" feeling for data scientists and process engineers when navigating massive machine time-series data. 
+**Signal Probe** is a Time-Series Signal Intelligent Exploration Engineering Platform. It is designed to eliminate the "getting lost" feeling for data scientists and process engineers when navigating massive machine time-series data.
 
 By automating feature extraction and leveraging a Macro-Micro visualization architecture, the platform transforms long-cycle raw signals into instantly comparable micro-engineering insights, significantly accelerating anomaly root-cause analysis.
 

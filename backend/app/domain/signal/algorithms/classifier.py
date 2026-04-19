@@ -27,15 +27,9 @@ def classify(values: list[float]) -> list[str]:
         pl.DataFrame({"v": values})
         .with_columns(
             [
-                pl.col("v")
-                .rolling_var(window_size=WINDOW, min_periods=1)
-                .alias("rv"),
-                pl.col("v")
-                .rolling_mean(window_size=WINDOW, min_periods=1)
-                .alias("rm"),
-                pl.col("v")
-                .rolling_std(window_size=WINDOW, min_periods=1)
-                .alias("rs"),
+                pl.col("v").rolling_var(window_size=WINDOW, min_periods=1).alias("rv"),
+                pl.col("v").rolling_mean(window_size=WINDOW, min_periods=1).alias("rm"),
+                pl.col("v").rolling_std(window_size=WINDOW, min_periods=1).alias("rs"),
             ]
         )
         .with_columns(
