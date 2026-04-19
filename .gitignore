@@ -1,0 +1,55 @@
+# ── Python build artifacts ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Test & coverage ───────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Linter / type-checker caches ─────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+
+# ── uv ───────────────────────────────────────────────────────────────────────
+# uv.lock IS committed (reproducible installs); ignore nothing extra from uv
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ── Alembic (versions ARE committed; ignore nothing here by default) ──────────
+
+# ── Signal storage (runtime data — never commit) ──────────────────────────────
+backend/storage/
+
+# ── Environment files (contain secrets) ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+
+# ── Local PR drafts ───────────────────────────────────────────────────────────
+PR.md

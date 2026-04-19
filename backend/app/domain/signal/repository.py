@@ -1,0 +1,116 @@
+import uuid
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.domain.signal.algorithms.segmenter import RawRun
+from app.domain.signal.enums import ProcessingStatus
+from app.domain.signal.models import RunSegment, SignalMetadata
+
+
+class SignalRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    # ── SignalMetadata CRUD ─────────────────────────────────────────────────
+
+    async def create_signal(
+        self,
+        owner_id: uuid.UUID,
+        original_filename: str,
+        file_path: str,
+    ) -> SignalMetadata:
+        signal = SignalMetadata(
+            owner_id=owner_id,
+            original_filename=original_filename,
+            file_path=file_path,
+            status=ProcessingStatus.PENDING,
+        )
+        self.session.add(signal)
+        await self.session.commit()
+        await self.session.refresh(signal)
+        return signal
+
+    async def get_signal(self, signal_id: uuid.UUID) -> SignalMetadata | None:
+        result = await self.session.execute(
+            select(SignalMetadata)
+            .where(SignalMetadata.id == signal_id)
+            .options(selectinload(SignalMetadata.runs))
+        )
+        return result.scalars().first()
+
+    async def list_signals(self, owner_id: uuid.UUID) -> list[SignalMetadata]:
+        result = await self.session.execute(
+            select(SignalMetadata)
+            .where(SignalMetadata.owner_id == owner_id)
+            .order_by(SignalMetadata.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def update_signal_processing(
+        self,
+        signal_id: uuid.UUID,
+        status: ProcessingStatus,
+        total_points: int | None = None,
+        active_run_count: int | None = None,
+        ooc_count: int | None = None,
+        processed_file_path: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        values: dict = {"status": status.value}
+        if total_points is not None:
+            values["total_points"] = total_points
+        if active_run_count is not None:
+            values["active_run_count"] = active_run_count
+        if ooc_count is not None:
+            values["ooc_count"] = ooc_count
+        if processed_file_path is not None:
+            values["processed_file_path"] = processed_file_path
+        if error_message is not None:
+            values["error_message"] = error_message
+        await self.session.execute(
+            update(SignalMetadata)
+            .where(SignalMetadata.id == signal_id)
+            .values(**values)
+        )
+        await self.session.commit()
+
+    # ── RunSegment CRUD ─────────────────────────────────────────────────────
+
+    async def create_runs(
+        self, signal_id: uuid.UUID, raw_runs: list[RawRun]
+    ) -> list[RunSegment]:
+        segments = [
+            RunSegment(
+                signal_id=signal_id,
+                run_index=r.run_index,
+                start_x=r.start_x,
+                end_x=r.end_x,
+                duration_seconds=r.duration_seconds,
+                value_max=r.value_max,
+                value_min=r.value_min,
+                value_mean=r.value_mean,
+                value_variance=r.value_variance,
+                ooc_count=r.ooc_count,
+            )
+            for r in raw_runs
+        ]
+        self.session.add_all(segments)
+        await self.session.commit()
+        for s in segments:
+            await self.session.refresh(s)
+        return segments
+
+    async def get_runs_by_ids(
+        self, signal_id: uuid.UUID, run_ids: list[uuid.UUID]
+    ) -> list[RunSegment]:
+        result = await self.session.execute(
+            select(RunSegment)
+            .where(
+                RunSegment.signal_id == signal_id,
+                RunSegment.id.in_(run_ids),
+            )
+            .order_by(RunSegment.run_index)
+        )
+        return list(result.scalars().all())

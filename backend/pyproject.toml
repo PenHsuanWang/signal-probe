@@ -1,0 +1,44 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "bcrypt>=5.0.0",
+    "fastapi[standard]>=0.136.0",
+    "numpy>=2.2.0",
+    "polars>=1.30.0",
+    "pydantic>=2.13.2",
+    "pydantic-settings>=2.13.1",
+    "pyjwt>=2.12.1",
+    "sqlalchemy[asyncio]>=2.0.49",
+]
+
+[dependency-groups]
+dev = [
+    "bump-my-version>=0.28.0",
+    "ruff>=0.15.11",
+]
+
+# ── Version bumping ───────────────────────────────────────────────────────────
+# Usage: cd backend && uv run bump-my-version bump patch   (or minor / major)
+# Always run on a chore/bump-vX.Y.Z branch off dev; push the vX.Y.Z tag AFTER
+# the dev→master PR merges to trigger release.yml.
+[tool.bumpversion]
+current_version = "0.1.0"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+commit = true
+tag = true
+tag_name = "v{new_version}"
+tag_message = "Release version {new_version}"
+commit_args = "--no-verify"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
