@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Plot from 'react-plotly.js';
+import { Plot } from '../lib/plot';
 import { Activity, UploadCloud, CheckCircle, Clock, XCircle, RefreshCw } from 'lucide-react';
 import FileUploader from '../components/FileUploader';
 import { listSignals, getMacroView, getRunChunks } from '../lib/api';

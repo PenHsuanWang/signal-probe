@@ -277,6 +277,7 @@ CREATE TABLE run_segments (
 | B1 | `frontend/src/pages/Register.tsx` | Endpoint corrected to `POST /auth/register` |
 | B2 | `backend/app/main.py` | `CORSMiddleware` added; `CORS_ORIGINS` in settings |
 | B3 | `frontend/src/index.css` | `--color-brand-400: #60a5fa` added to `@theme` |
+| B4 | `frontend/src/lib/plot.ts` | Fixed Vite ESM interop wrapping CJS react-plotly.js export in a default object |
 
 ### ✅ All Architecture Violations — Fixed
 
