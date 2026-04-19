@@ -59,17 +59,9 @@ class SignalService:
         await self.session.refresh(signal)
 
         # Trigger background processing
-        from fastapi import BackgroundTasks
-
-        bt = BackgroundTasks()
-        bt.add_task(run_pipeline, signal.id, abs_path, session_factory)
-        # Run directly (BackgroundTasks are executed by FastAPI; we call the
-        # coroutine scheduler via asyncio for the background task approach)
         import asyncio
 
-        asyncio.get_event_loop().create_task(
-            run_pipeline(signal.id, abs_path, session_factory)
-        )
+        asyncio.create_task(run_pipeline(signal.id, abs_path, session_factory))
 
         return signal
 
