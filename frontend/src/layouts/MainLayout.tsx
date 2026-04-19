@@ -1,9 +1,12 @@
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Activity, LogOut, User } from 'lucide-react';
+import { Activity } from 'lucide-react';
+import { SidebarProvider } from '../context/SidebarContext';
+import TopNav from '../components/TopNav';
+import Sidebar from '../components/Sidebar';
 
 export default function MainLayout() {
-  const { isAuthenticated, isLoading, user, logout } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -20,29 +23,16 @@ export default function MainLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      <header className="border-b border-zinc-800 bg-zinc-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <Activity className="text-brand-500" />
-          <h1 className="text-xl font-bold font-mono tracking-tight text-zinc-100">SIGNAL_PROBE</h1>
+    <SidebarProvider>
+      <div className="flex flex-col h-screen overflow-hidden bg-zinc-950 text-zinc-100">
+        <TopNav />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto p-6">
+            <Outlet />
+          </main>
         </div>
-        <div className="flex items-center space-x-6">
-          <div className="flex items-center space-x-2 text-sm text-zinc-400">
-            <User size={16} />
-            <span>{user?.email}</span>
-          </div>
-          <button
-            onClick={logout}
-            className="flex items-center space-x-2 text-sm text-zinc-400 hover:text-zinc-100 transition-colors"
-          >
-            <LogOut size={16} />
-            <span>Logout</span>
-          </button>
-        </div>
-      </header>
-      <main className="flex-1 p-6">
-        <Outlet />
-      </main>
-    </div>
+      </div>
+    </SidebarProvider>
   );
 }

@@ -5,6 +5,9 @@ import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import SignalsPage from './pages/SignalsPage';
+import GroupsPage from './pages/GroupsPage';
+import SettingsPage from './pages/SettingsPage';
 
 // ── Global error boundary ────────────────────────────────────────────────────
 interface EBState { hasError: boolean; message: string }
@@ -51,7 +54,9 @@ function App() {
             <Route path="/register" element={<Register />} />
             <Route path="/" element={<MainLayout />}>
               <Route index element={<Dashboard />} />
-              {/* Additional protected routes can go here */}
+              <Route path="signals" element={<SignalsPage />} />
+              <Route path="groups" element={<GroupsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
