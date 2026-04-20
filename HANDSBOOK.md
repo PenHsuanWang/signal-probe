@@ -451,6 +451,6 @@ git push origin vX.Y.Z
 | Problem | Fix |
 |---------|-----|
 | `pre-commit` fails in CI but passes locally | Ensure `pip install -e ".[dev]"` runs before pre-commit in CI (already wired in `ci.yml`) |
-| `bump-my-version: command not found` | Run `source backend/.venv/bin/activate` first |
+| `uvx: command not found` | Install uv globally (`curl -LsSf https://astral.sh/uv/install.sh | sh`) |
 | Tag pushed before `master` merge | Release will point to a non-master state — push tag only after merge |
 | `git push origin master` rejected | Branch is protected — open a PR from `dev` |
