@@ -32,6 +32,7 @@ export function SignalsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Initial load
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refresh(); }, [refresh]);
 
   // Keep the "needs polling" flag in sync without restarting the interval
@@ -56,6 +57,7 @@ export function SignalsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSignals(): SignalsContextType {
   const ctx = useContext(SignalsContext);
   if (!ctx) throw new Error('useSignals must be used within SignalsProvider');

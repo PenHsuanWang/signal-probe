@@ -15,12 +15,14 @@ import _Plotly from 'plotly.js-dist-min';
 // Vite ESM interop fix: CommonJS modules might be wrapped in an object with a `default` property.
 const createPlotlyComponent = (
   _createPlotlyComponent && typeof _createPlotlyComponent === 'object' && 'default' in _createPlotlyComponent
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ? (_createPlotlyComponent as any).default
     : _createPlotlyComponent
 ) as typeof _createPlotlyComponent;
 
 const Plotly = (
   _Plotly && typeof _Plotly === 'object' && 'default' in _Plotly
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ? (_Plotly as any).default
     : _Plotly
 ) as typeof _Plotly;

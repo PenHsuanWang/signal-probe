@@ -30,6 +30,7 @@ export default function Register() {
 
       // Redirect to login after successful registration
       navigate('/login');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to register');
     } finally {

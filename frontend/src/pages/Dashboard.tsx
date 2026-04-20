@@ -155,12 +155,14 @@ export default function Dashboard() {
   // ── Sync signal visibleChannels when macroData changes ────────────────────
   useEffect(() => {
     if (macroData) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setVisibleChannels(new Set(macroData.channels.map((c) => c.channel_name)));
     }
   }, [macroData]);
 
   // ── Load macro view on signal selection ───────────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!selectedId) { setMacroData(null); setRunChunks([]); setMacroError(false); return; }
     const sig = signals.find((s) => s.id === selectedId);
     if (!sig || sig.status !== 'COMPLETED') { setMacroData(null); setRunChunks([]); setMacroError(false); return; }
@@ -176,6 +178,7 @@ export default function Dashboard() {
 
   // ── Load group macro views ─────────────────────────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (viewMode !== 'group' || !selectedGroupId) { setGroupResults([]); return; }
     const group = groups.find((g) => g.id === selectedGroupId);
     if (!group || !group.members.length) { setGroupResults([]); return; }

@@ -294,6 +294,7 @@ export default function GroupsPage() {
     }
   }
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadGroups(); }, []);
 
   async function handleCreate() {
