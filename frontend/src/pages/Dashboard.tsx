@@ -5,6 +5,7 @@ import {
   RefreshCw, Layers,
 } from 'lucide-react';
 import FileUploader from '../components/FileUploader';
+import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
 import { useSignals } from '../context/SignalsContext';
 import type {
@@ -515,10 +516,18 @@ export default function Dashboard() {
               )}
             </div>
           ) : (
-            <Plot data={macroTraces} layout={macroLayout} useResizeHandler
-              style={{ width: '100%', height: '260px' }} config={{ displayModeBar: false }}
-              onRelayout={handleMacroRelayout}
-            />
+            macroData.channels.length > 1 ? (
+              <MultiChannelMacroChart
+                macro={macroData}
+                visibleChannels={visibleChannels}
+                onRelayout={handleMacroRelayout}
+              />
+            ) : (
+              <Plot data={macroTraces} layout={macroLayout} useResizeHandler
+                style={{ width: '100%', height: '260px' }} config={{ displayModeBar: false }}
+                onRelayout={handleMacroRelayout}
+              />
+            )
           )}
         </div>
       )}

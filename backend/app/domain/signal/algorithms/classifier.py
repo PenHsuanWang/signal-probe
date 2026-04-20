@@ -14,22 +14,25 @@ IDLE_VARIANCE_THRESHOLD: float = 0.005
 OOC_Z_SCORE_THRESHOLD: float = 3.0
 
 
-def classify(values: list[float]) -> list[str]:
+def classify(values: list[float | None]) -> list[str]:
     """Classify each value as IDLE, ACTIVE, or OOC.
 
     Args:
-        values: Raw signal values in chronological order.
+        values: Raw signal values in chronological order.  ``None`` entries
+                (produced by time-alignment of stacked CSVs) are treated as
+                missing data and classified as ``IDLE`` because their rolling
+                variance is effectively zero.
 
     Returns:
-        List of state strings parallel to `values`.
+        List of state strings parallel to ``values``.
     """
     df = (
         pl.DataFrame({"v": values})
         .with_columns(
             [
-                pl.col("v").rolling_var(window_size=WINDOW, min_periods=1).alias("rv"),
-                pl.col("v").rolling_mean(window_size=WINDOW, min_periods=1).alias("rm"),
-                pl.col("v").rolling_std(window_size=WINDOW, min_periods=1).alias("rs"),
+                pl.col("v").rolling_var(window_size=WINDOW, min_samples=1).alias("rv"),
+                pl.col("v").rolling_mean(window_size=WINDOW, min_samples=1).alias("rm"),
+                pl.col("v").rolling_std(window_size=WINDOW, min_samples=1).alias("rs"),
             ]
         )
         .with_columns(
