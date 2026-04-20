@@ -26,6 +26,8 @@ class SignalMetadata(Base):
     ooc_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # JSON-encoded list of channel names, e.g. '["value"]' or '["temp","pressure"]'
+    channel_names: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     runs: Mapped[list["RunSegment"]] = relationship(
         "RunSegment", back_populates="signal", cascade="all, delete-orphan"

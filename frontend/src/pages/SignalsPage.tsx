@@ -1,9 +1,14 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Database, UploadCloud, RefreshCw, Search } from 'lucide-react';
+import { useState } from 'react';
+import { Database, UploadCloud, RefreshCw, Search, Pencil, Trash2, Check, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import FileUploader from '../components/FileUploader';
-import { listSignals } from '../lib/api';
+import { useSignals } from '../context/SignalsContext';
+import { deleteSignal, renameSignal } from '../lib/api';
 import type { SignalMetadata } from '../types/signal';
+
+const CHANNEL_PALETTE = [
+  '#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16',
+];
 
 function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
   const cls: Record<SignalMetadata['status'], string> = {
@@ -20,26 +25,65 @@ function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
   );
 }
 
+function ChannelPills({ names }: { names: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {names.map((n, i) => (
+        <span
+          key={n}
+          className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold"
+          style={{ backgroundColor: `${CHANNEL_PALETTE[i % CHANNEL_PALETTE.length]}22`,
+                   color: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }}
+        >
+          {n}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function SignalsPage() {
   const navigate = useNavigate();
-  const [signals, setSignals] = useState<SignalMetadata[]>([]);
+  const { signals, refresh } = useSignals();
   const [showUploader, setShowUploader] = useState(false);
   const [search, setSearch] = useState('');
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const refresh = useCallback(async () => {
-    try { setSignals(await listSignals()); } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    pollRef.current = setInterval(refresh, 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [refresh]);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const filtered = signals.filter((s) =>
     s.original_filename.toLowerCase().includes(search.toLowerCase())
   );
+
+  async function handleRenameSubmit(s: SignalMetadata) {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === s.original_filename) {
+      setRenamingId(null);
+      return;
+    }
+    setRenameError(null);
+    try {
+      await renameSignal(s.id, trimmed);
+      await refresh();
+    } catch {
+      setRenameError('Rename failed');
+    } finally {
+      setRenamingId(null);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      await deleteSignal(id);
+      await refresh();
+    } catch { /* ignore */ } finally {
+      setDeletingId(null);
+      setConfirmDeleteId(null);
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -49,9 +93,7 @@ export default function SignalsPage() {
         <div className="flex items-center gap-3">
           <Database size={20} className="text-brand-500" />
           <div>
-            <h1 className="text-sm font-bold font-mono text-zinc-100 tracking-widest uppercase">
-              Signals
-            </h1>
+            <h1 className="text-sm font-bold font-mono text-zinc-100 tracking-widest uppercase">Signals</h1>
             <p className="text-xs font-mono text-zinc-500 mt-0.5">
               {signals.length} total · {signals.filter((s) => s.status === 'COMPLETED').length} ready
             </p>
@@ -69,12 +111,14 @@ export default function SignalsPage() {
       {/* Upload panel */}
       {showUploader && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-          <FileUploader
-            onUploadComplete={(s) => {
-              setSignals((p) => [s, ...p]);
-              setShowUploader(false);
-            }}
-          />
+          <FileUploader onUploadComplete={() => { refresh(); setShowUploader(false); }} />
+        </div>
+      )}
+
+      {/* Rename error toast */}
+      {renameError && (
+        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-xs font-mono text-red-400">
+          <X size={12} /> {renameError}
         </div>
       )}
 
@@ -91,13 +135,14 @@ export default function SignalsPage() {
 
       {/* Signal table */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[minmax(0,2fr)_80px_80px_120px_100px_80px] gap-4 px-4 py-2.5 border-b border-zinc-800 text-[10px] font-mono font-bold text-zinc-600 uppercase tracking-widest">
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-2.5 border-b border-zinc-800 text-[10px] font-mono font-bold text-zinc-600 uppercase tracking-widest">
           <span>Filename</span>
+          <span>Channels</span>
           <span>Runs</span>
           <span>OOC</span>
           <span>Status</span>
           <span>Uploaded</span>
-          <span>Action</span>
+          <span>Actions</span>
         </div>
 
         {filtered.length === 0 ? (
@@ -112,11 +157,44 @@ export default function SignalsPage() {
             {filtered.map((s) => (
               <div
                 key={s.id}
-                className="grid grid-cols-[minmax(0,2fr)_80px_80px_120px_100px_80px] gap-4 px-4 py-3 hover:bg-zinc-800/40 transition-colors"
+                className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-3 hover:bg-zinc-800/40 transition-colors items-center"
               >
-                <span className="text-xs font-mono text-zinc-200 truncate" title={s.original_filename}>
-                  {s.original_filename}
-                </span>
+                {/* Filename / Rename inline */}
+                <div className="min-w-0">
+                  {renamingId === s.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRenameSubmit(s);
+                          if (e.key === 'Escape') setRenamingId(null);
+                        }}
+                        className="flex-1 min-w-0 bg-zinc-800 border border-brand-500/40 rounded px-2 py-0.5 text-xs font-mono text-zinc-100 focus:outline-none"
+                      />
+                      <button onClick={() => handleRenameSubmit(s)} className="text-green-400 hover:text-green-300 flex-shrink-0">
+                        <Check size={12} />
+                      </button>
+                      <button onClick={() => setRenamingId(null)} className="text-zinc-500 hover:text-zinc-300 flex-shrink-0">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs font-mono text-zinc-200 truncate block" title={s.original_filename}>
+                      {s.original_filename}
+                    </span>
+                  )}
+                </div>
+
+                {/* Channel pills */}
+                <div>
+                  {s.status === 'COMPLETED' && s.channel_names?.length > 0
+                    ? <ChannelPills names={s.channel_names} />
+                    : <span className="text-zinc-600 text-xs font-mono">—</span>
+                  }
+                </div>
+
                 <span className="text-xs font-mono text-zinc-400">
                   {s.status === 'COMPLETED' ? `${s.active_run_count}r` : '—'}
                 </span>
@@ -127,7 +205,9 @@ export default function SignalsPage() {
                 <span className="text-xs font-mono text-zinc-600">
                   {new Date(s.created_at).toLocaleDateString()}
                 </span>
-                <div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2">
                   {s.status === 'COMPLETED' && (
                     <button
                       onClick={() => navigate('/')}
@@ -136,16 +216,47 @@ export default function SignalsPage() {
                       Explore →
                     </button>
                   )}
+                  <button
+                    onClick={() => { setRenamingId(s.id); setRenameValue(s.original_filename); }}
+                    className="text-zinc-500 hover:text-zinc-200 transition-colors"
+                    title="Rename"
+                  >
+                    <Pencil size={12} />
+                  </button>
+
+                  {/* Delete with inline confirm */}
+                  {confirmDeleteId === s.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        disabled={deletingId === s.id}
+                        onClick={() => handleDelete(s.id)}
+                        className="text-[10px] font-mono text-red-400 hover:text-red-300 disabled:opacity-50"
+                      >
+                        {deletingId === s.id ? '…' : 'Yes'}
+                      </button>
+                      <span className="text-zinc-600">/</span>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="text-[10px] font-mono text-zinc-500 hover:text-zinc-300"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(s.id)}
+                      className="text-zinc-600 hover:text-red-400 transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
-
-      <p className="text-center text-[10px] font-mono text-zinc-700 py-1">
-        Delete · Rename · Group assignment — coming in the next update
-      </p>
     </div>
   );
 }

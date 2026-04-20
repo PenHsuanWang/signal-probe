@@ -15,6 +15,7 @@ if config.config_file_name is not None:
 # Import ALL models so alembic autogenerate can discover them
 from app.core.config import settings
 from app.db.base import Base
+from app.domain.group.models import SignalGroup, SignalGroupMember  # noqa: F401
 from app.domain.signal.models import RunSegment, SignalMetadata  # noqa: F401
 from app.domain.user.models import User  # noqa: F401
 

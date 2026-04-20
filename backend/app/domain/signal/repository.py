@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -48,6 +48,22 @@ class SignalRepository:
         )
         return list(result.scalars().all())
 
+    async def rename_signal(self, signal_id: uuid.UUID, new_filename: str) -> bool:
+        result = await self.session.execute(
+            update(SignalMetadata)
+            .where(SignalMetadata.id == signal_id)
+            .values(original_filename=new_filename)
+        )
+        await self.session.commit()
+        return result.rowcount > 0
+
+    async def delete_signal(self, signal_id: uuid.UUID) -> bool:
+        result = await self.session.execute(
+            delete(SignalMetadata).where(SignalMetadata.id == signal_id)
+        )
+        await self.session.commit()
+        return result.rowcount > 0
+
     async def update_signal_processing(
         self,
         signal_id: uuid.UUID,
@@ -57,6 +73,7 @@ class SignalRepository:
         ooc_count: int | None = None,
         processed_file_path: str | None = None,
         error_message: str | None = None,
+        channel_names: list[str] | None = None,
     ) -> None:
         values: dict = {"status": status.value}
         if total_points is not None:
@@ -69,6 +86,10 @@ class SignalRepository:
             values["processed_file_path"] = processed_file_path
         if error_message is not None:
             values["error_message"] = error_message
+        if channel_names is not None:
+            import json
+
+            values["channel_names"] = json.dumps(channel_names)
         await self.session.execute(
             update(SignalMetadata)
             .where(SignalMetadata.id == signal_id)

@@ -68,7 +68,9 @@ export default function TopNav() {
         <input
           placeholder="Search signals…"
           aria-label="Search signals"
-          className="bg-zinc-800 border border-zinc-700 rounded text-xs font-mono text-zinc-300 pl-8 pr-3 py-1.5 w-52 focus:outline-none focus:ring-1 focus:ring-brand-500/40 focus:border-brand-500/40 placeholder:text-zinc-600 transition-all"
+          disabled
+          title="Search coming soon"
+          className="bg-zinc-800 border border-zinc-700 rounded text-xs font-mono text-zinc-300 pl-8 pr-3 py-1.5 w-52 focus:outline-none placeholder:text-zinc-600 cursor-not-allowed opacity-50 transition-all"
         />
       </div>
 

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Activity, Database, Layers, Settings,
   UploadCloud, RefreshCw,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
-import { listSignals } from '../lib/api';
+import { useSignals } from '../context/SignalsContext';
 import type { SignalMetadata } from '../types/signal';
 
 const NAV_ITEMS = [
@@ -25,18 +24,7 @@ const STATUS_DOT: Record<SignalMetadata['status'], string> = {
 export default function Sidebar() {
   const { isCollapsed } = useSidebar();
   const navigate = useNavigate();
-  const [signals, setSignals] = useState<SignalMetadata[]>([]);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const fetchSignals = useCallback(async () => {
-    try { setSignals(await listSignals()); } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    fetchSignals();
-    pollRef.current = setInterval(fetchSignals, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [fetchSignals]);
+  const { signals } = useSignals();
 
   const processingCount = signals.filter(
     (s) => s.status === 'PENDING' || s.status === 'PROCESSING',
