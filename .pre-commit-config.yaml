@@ -12,6 +12,7 @@ repos:
         args: [--maxkb=500]
       - id: check-merge-conflict
       - id: check-json
+        exclude: '^frontend/tsconfig.*\.json$'
 
   # ── Ruff: linting + import ordering (Python only) ───────────────────────
   # Scope to backend/ to avoid accidentally processing frontend TS files.

@@ -1,5 +1,7 @@
 """SignalService: use-case orchestration for signal upload, listing, and views."""
 
+import asyncio
+import json
 import os
 import uuid
 
@@ -11,20 +13,23 @@ from app.domain.signal.enums import ProcessingStatus
 from app.domain.signal.models import RunSegment, SignalMetadata
 from app.domain.signal.repository import SignalRepository
 from app.domain.signal.schemas import (
+    ChannelChunkData,
+    ChannelMacroData,
     MacroViewResponse,
     RunBound,
     RunChunkResponse,
     SignalMetadataResponse,
 )
-from app.infrastructure.storage.local import LocalStorageAdapter
+from app.infrastructure.storage.interface import IStorageAdapter
 
-_storage = LocalStorageAdapter()
+_background_tasks: set[asyncio.Task] = set()
 
 
 class SignalService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, storage: IStorageAdapter) -> None:
         self.session = session
         self.repo = SignalRepository(session)
+        self.storage = storage
 
     # ── Upload ──────────────────────────────────────────────────────────────
 
@@ -41,13 +46,12 @@ class SignalService:
         signal = await self.repo.create_signal(
             owner_id=owner_id,
             original_filename=filename,
-            file_path="",  # will be filled after save
+            file_path="",
         )
 
         relative_path = f"signals/{signal.id}/raw{ext}"
-        abs_path = await _storage.save(relative_path, file_bytes)
+        abs_path = await self.storage.save(relative_path, file_bytes)
 
-        # Patch file_path on the record
         from sqlalchemy import update as sa_update
 
         from app.domain.signal.models import SignalMetadata as SM
@@ -58,18 +62,11 @@ class SignalService:
         await self.session.commit()
         await self.session.refresh(signal)
 
-        # Trigger background processing
-        from fastapi import BackgroundTasks
-
-        bt = BackgroundTasks()
-        bt.add_task(run_pipeline, signal.id, abs_path, session_factory)
-        # Run directly (BackgroundTasks are executed by FastAPI; we call the
-        # coroutine scheduler via asyncio for the background task approach)
-        import asyncio
-
-        asyncio.get_event_loop().create_task(
-            run_pipeline(signal.id, abs_path, session_factory)
+        task = asyncio.create_task(
+            run_pipeline(signal.id, abs_path, session_factory, self.storage)
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return signal
 
@@ -84,6 +81,31 @@ class SignalService:
     async def get_signal(self, signal_id: uuid.UUID) -> SignalMetadata | None:
         return await self.repo.get_signal(signal_id)
 
+    # ── Rename ──────────────────────────────────────────────────────────────
+
+    async def rename_signal(
+        self, signal_id: uuid.UUID, new_filename: str
+    ) -> SignalMetadataResponse | None:
+        ok = await self.repo.rename_signal(signal_id, new_filename)
+        if not ok:
+            return None
+        signal = await self.repo.get_signal(signal_id)
+        return SignalMetadataResponse.model_validate(signal) if signal else None
+
+    # ── Delete ──────────────────────────────────────────────────────────────
+
+    async def delete_signal(self, signal_id: uuid.UUID) -> bool:
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            return False
+
+        file_paths = [p for p in (signal.file_path, signal.processed_file_path) if p]
+        deleted = await self.repo.delete_signal(signal_id)
+        if deleted:
+            for path in file_paths:
+                await self.storage.delete(path)
+        return deleted
+
     # ── Macro view ──────────────────────────────────────────────────────────
 
     async def get_macro_view(self, signal_id: uuid.UUID) -> MacroViewResponse:
@@ -95,12 +117,30 @@ class SignalService:
         if not signal.processed_file_path:
             raise ValueError("Processed file not available")
 
+        channel_names = self._decode_channel_names(signal.channel_names)
         df = pl.read_parquet(signal.processed_file_path)
-        x: list[float] = df["timestamp_s"].to_list()
-        y: list[float] = df["value"].to_list()
-        states: list[str] = df["state"].to_list()
 
-        x_down, y_down, states_down = lttb.downsample_with_states(x, y, states)
+        x: list[float] = df["timestamp_s"].to_list()
+        primary_ch = channel_names[0]
+        primary_y: list[float] = df[primary_ch].to_list()
+        primary_states: list[str] = df[f"{primary_ch}_state"].to_list()
+
+        # Downsample x on primary channel; get shared indices
+        x_down, y_down, states_down = lttb.downsample_with_states(
+            x, primary_y, primary_states
+        )
+
+        # Build per-channel data (reuse downsampled x indices for all channels)
+        sample_indices = _find_sample_indices(x, x_down)
+        channel_data: list[ChannelMacroData] = []
+        for ch_name in channel_names:
+            ch_y: list[float] = df[ch_name].to_list()
+            ch_states: list[str] = df[f"{ch_name}_state"].to_list()
+            sampled_y = [ch_y[i] for i in sample_indices]
+            sampled_s = [ch_states[i] for i in sample_indices]
+            channel_data.append(
+                ChannelMacroData(channel_name=ch_name, y=sampled_y, states=sampled_s)
+            )
 
         run_bounds = [
             RunBound(
@@ -116,8 +156,7 @@ class SignalService:
         return MacroViewResponse(
             signal_id=signal.id,
             x=x_down,
-            y=y_down,
-            states=states_down,
+            channels=channel_data,
             runs=run_bounds,
         )
 
@@ -134,6 +173,7 @@ class SignalService:
         if not signal.processed_file_path:
             raise ValueError("Processed file not available")
 
+        channel_names = self._decode_channel_names(signal.channel_names)
         segments: list[RunSegment] = await self.repo.get_runs_by_ids(signal_id, run_ids)
         if not segments:
             return []
@@ -147,13 +187,17 @@ class SignalService:
                 & (pl.col("timestamp_s") <= seg.end_x)
             )
             cx: list[float] = chunk["timestamp_s"].to_list()
-            cy: list[float] = chunk["value"].to_list()
-            cs: list[str] = chunk["state"].to_list()
-
-            # Normalise to relative time within the run
             if cx:
                 t0 = cx[0]
                 cx = [t - t0 for t in cx]
+
+            channel_chunks: list[ChannelChunkData] = []
+            for ch_name in channel_names:
+                cy: list[float] = chunk[ch_name].to_list()
+                cs: list[str] = chunk[f"{ch_name}_state"].to_list()
+                channel_chunks.append(
+                    ChannelChunkData(channel_name=ch_name, y=cy, states=cs)
+                )
 
             results.append(
                 RunChunkResponse(
@@ -166,9 +210,35 @@ class SignalService:
                     value_variance=seg.value_variance,
                     ooc_count=seg.ooc_count,
                     x=cx,
-                    y=cy,
-                    states=cs,
+                    channels=channel_chunks,
                 )
             )
 
         return results
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _decode_channel_names(raw: str | None) -> list[str]:
+        if not raw:
+            return ["value"]
+        try:
+            names = json.loads(raw)
+            return names if isinstance(names, list) and names else ["value"]
+        except Exception:
+            return ["value"]
+
+
+def _find_sample_indices(original_x: list[float], sampled_x: list[float]) -> list[int]:
+    """Map sampled x values back to their indices in the original array.
+
+    Uses a two-pointer approach (both lists are sorted ascending).
+    """
+    indices: list[int] = []
+    j = 0
+    for sx in sampled_x:
+        while j < len(original_x) and original_x[j] < sx:
+            j += 1
+        indices.append(j)
+        j += 1
+    return indices

@@ -27,13 +27,14 @@ export default function Login() {
       });
 
       const token = res.data.access_token;
-      
+
       const userRes = await api.get('/users/me', {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       login(token, userRes.data);
       navigate('/');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to login');
     } finally {

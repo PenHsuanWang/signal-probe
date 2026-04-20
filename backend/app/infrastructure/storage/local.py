@@ -13,7 +13,11 @@ class LocalStorageAdapter(IStorageAdapter):
         self._base = os.path.abspath(settings.STORAGE_PATH)
 
     def _abs(self, relative_path: str) -> str:
-        return os.path.join(self._base, relative_path)
+        abs_path = os.path.normpath(os.path.join(self._base, relative_path))
+        # Ensure the resolved path stays inside the storage root
+        if abs_path != self._base and not abs_path.startswith(self._base + os.sep):
+            raise ValueError(f"Resolved path escapes storage root: {relative_path!r}")
+        return abs_path
 
     async def save(self, relative_path: str, data: bytes) -> str:
         abs_path = self._abs(relative_path)

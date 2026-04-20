@@ -3,6 +3,7 @@
 Runs as a FastAPI BackgroundTask (ADR-002).
 """
 
+import io
 import logging
 import os
 import uuid
@@ -12,92 +13,97 @@ import polars as pl
 from app.domain.signal.algorithms import classifier, segmenter
 from app.domain.signal.enums import ProcessingStatus
 from app.domain.signal.repository import SignalRepository
-from app.infrastructure.storage.local import LocalStorageAdapter
+from app.infrastructure.storage.interface import IStorageAdapter
 
 logger = logging.getLogger(__name__)
 
-_storage = LocalStorageAdapter()
 
+def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list[float]]]:
+    """Read a CSV or Parquet file and return (timestamps_s, channels).
 
-def _read_signal_file(raw_path: str) -> tuple[list[float], list[float]]:
-    """Read a CSV or Parquet file and return (timestamps_s, values).
-
-    Timestamps are normalised to elapsed seconds (first point = 0.0).
-    The first numeric column is treated as time/index; the second as value.
+    Returns:
+        timestamps_s: elapsed-seconds list (first point = 0.0)
+        channels: OrderedDict {channel_name: [float, ...]}
     """
     ext = os.path.splitext(raw_path)[1].lower()
 
     if ext in (".parquet", ".pq"):
         df = pl.read_parquet(raw_path)
     else:
-        # CSV: infer separator, first row as header
         df = pl.read_csv(raw_path, infer_schema_length=500, try_parse_dates=True)
 
-    # Select the first two usable (numeric or temporal) columns
+    # Identify all usable columns
     numeric_cols = [
         c for c, t in zip(df.columns, df.dtypes) if t.is_numeric() or t.is_temporal()
     ]
-    if len(numeric_cols) < 2:
-        # Fall back: use row index as time and first numeric as value
-        value_col = numeric_cols[0] if numeric_cols else df.columns[0]
-        df = df.with_row_index("__ts__").select(
-            [
-                pl.col("__ts__").cast(pl.Float64).alias("ts"),
-                pl.col(value_col).cast(pl.Float64).alias("val"),
-            ]
-        )
+
+    if len(numeric_cols) < 1:
+        raise ValueError("File contains no usable numeric columns.")
+
+    if len(numeric_cols) == 1:
+        # Only one column — use row index as time axis
+        value_col = numeric_cols[0]
+        ts_series = pl.Series("ts", list(range(len(df)))).cast(pl.Float64)
+        val_series = df[value_col].cast(pl.Float64)
+        df = pl.DataFrame({"ts": ts_series, value_col: val_series}).drop_nulls()
+        time_col = "ts"
+        ch_cols = [value_col]
     else:
-        df = df.select(
-            [
-                pl.col(numeric_cols[0]).cast(pl.Float64).alias("ts"),
-                pl.col(numeric_cols[1]).cast(pl.Float64).alias("val"),
-            ]
-        )
+        # First column is the time axis; remaining are value channels
+        time_col = numeric_cols[0]
+        ch_cols = numeric_cols[1:]
+        cast_exprs = [pl.col(time_col).cast(pl.Float64).alias(time_col)] + [
+            pl.col(c).cast(pl.Float64) for c in ch_cols
+        ]
+        df = df.select(cast_exprs).drop_nulls()
 
-    df = df.drop_nulls()
-    ts: list[float] = df["ts"].to_list()
-    vals: list[float] = df["val"].to_list()
+    if df.is_empty():
+        raise ValueError("File contains no valid numeric data points after cleaning.")
 
-    # Normalise timestamps to elapsed seconds
+    ts: list[float] = df[time_col].to_list()
     t0 = ts[0]
     ts = [t - t0 for t in ts]
 
-    return ts, vals
+    channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
+    return ts, channels
 
 
 async def run_pipeline(
     signal_id: uuid.UUID,
     raw_file_path: str,
     session_factory,  # async_sessionmaker
+    storage: IStorageAdapter,
 ) -> None:
     """Entry point called by BackgroundTasks."""
     async with session_factory() as session:
         repo = SignalRepository(session)
 
-        # Mark as PROCESSING
-        await repo.update_signal_processing(
-            signal_id, ProcessingStatus.PROCESSING
-        )
+        await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
-            timestamps, values = _read_signal_file(raw_file_path)
+            timestamps, channels = _read_signal_file(raw_file_path)
+            channel_names = list(channels.keys())
 
-            # 1. Classify states
-            states = classifier.classify(values)
+            # Classify + segment on the primary (first) channel
+            primary_values = channels[channel_names[0]]
+            primary_states = classifier.classify(primary_values)
+            raw_runs = segmenter.segment(timestamps, primary_values, primary_states)
 
-            # 2. Segment runs
-            raw_runs = segmenter.segment(timestamps, values, states)
+            # Build processed DataFrame with per-channel value + state columns
+            data: dict[str, list] = {"timestamp_s": timestamps}
+            for ch_name, ch_vals in channels.items():
+                data[ch_name] = ch_vals
+                if ch_name == channel_names[0]:
+                    data[f"{ch_name}_state"] = primary_states
+                else:
+                    data[f"{ch_name}_state"] = classifier.classify(ch_vals)
 
-            # 3. Persist processed signal as parquet
-            processed_df = pl.DataFrame(
-                {"timestamp_s": timestamps, "value": values, "state": states}
-            )
+            processed_df = pl.DataFrame(data)
+            buf = io.BytesIO()
+            processed_df.write_parquet(buf)
             processed_relative = f"signals/{signal_id}/processed.parquet"
-            processed_abs = await _storage.save(
-                processed_relative, processed_df.write_parquet(None)  # type: ignore[arg-type]
-            )
+            processed_abs = await storage.save(processed_relative, buf.getvalue())
 
-            # 4. Persist run segments to DB
             await repo.create_runs(signal_id, raw_runs)
 
             total_ooc = sum(r.ooc_count for r in raw_runs)
@@ -108,6 +114,7 @@ async def run_pipeline(
                 active_run_count=len(raw_runs),
                 ooc_count=total_ooc,
                 processed_file_path=processed_abs,
+                channel_names=channel_names,
             )
 
         except Exception as exc:

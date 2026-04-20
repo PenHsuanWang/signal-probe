@@ -5,6 +5,12 @@ target-version = "py312"
 select = ["E", "F", "I", "UP"]
 ignore = []
 
+[lint.per-file-ignores]
+# Alembic env.py puts model imports after config setup (standard Alembic pattern)
+"alembic/env.py" = ["E402"]
+# Migration files can have long lines in op.create_table() calls
+"alembic/versions/*.py" = ["E501"]
+
 [format]
 quote-style = "double"
 indent-style = "space"
