@@ -15,11 +15,23 @@ from app.db.session import get_db_session
 from app.domain.user.models import User
 from app.domain.user.repository import UserRepository
 from app.domain.user.schemas import TokenPayload
+from app.infrastructure.storage.interface import IStorageAdapter
+from app.infrastructure.storage.local import LocalStorageAdapter
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 TokenDep = Annotated[str, Depends(oauth2_scheme)]
+
+# Singleton: one adapter instance shared across all requests.
+_storage_adapter: IStorageAdapter = LocalStorageAdapter()
+
+
+def get_storage() -> IStorageAdapter:
+    return _storage_adapter
+
+
+StorageDep = Annotated[IStorageAdapter, Depends(get_storage)]
 
 
 async def get_current_user(session: DbSession, token: TokenDep) -> User:

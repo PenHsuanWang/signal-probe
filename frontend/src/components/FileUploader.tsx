@@ -29,8 +29,13 @@ export default function FileUploader({ onUploadComplete }: FileUploaderProps) {
         setSuccess(`"${file.name}" uploaded — processing started`);
         onUploadComplete(signal);
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Upload failed';
-        setError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? msg);
+        const axiosDetail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+        const safeDetail =
+          typeof axiosDetail === 'string' && axiosDetail.length <= 200 && !axiosDetail.includes('\n')
+            ? axiosDetail
+            : null;
+        const fallback = err instanceof Error ? err.message : 'Upload failed';
+        setError(safeDetail ?? fallback);
       } finally {
         setIsUploading(false);
         if (inputRef.current) inputRef.current.value = '';
