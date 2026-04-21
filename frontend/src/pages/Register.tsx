@@ -32,7 +32,12 @@ export default function Register() {
       navigate('/login');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to register');
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(detail.map((d: any) => d.msg).filter(Boolean).join('; ') || 'Failed to register');
+      } else {
+        setError(detail || 'Failed to register');
+      }
     } finally {
       setIsLoading(false);
     }
