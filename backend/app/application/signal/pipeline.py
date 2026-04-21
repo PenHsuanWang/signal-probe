@@ -184,12 +184,12 @@ def _read_wide_signal_file(
     if df.is_empty():
         raise ValueError("File contains no valid numeric data points after cleaning.")
 
-    ts2: list[float] = df[time_col].to_list()
-    t0b = ts2[0]
-    ts2 = [t - t0b for t in ts2]
+    ts: list[float] = df[time_col].to_list()
+    t0 = ts[0]
+    ts = [t - t0 for t in ts]
 
-    channels2: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
-    return ts2, channels2
+    channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
+    return ts, channels
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────

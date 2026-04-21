@@ -78,7 +78,7 @@ export default function ColumnConfigurator({ signalId, filename, onConfigured }:
             Configure columns
           </p>
           <p className="text-[10px] font-sans mt-0.5" style={{ color: 'var(--sp-text-tertiary)' }}>
-            {filename} · select the time axis and signal channels to analyse
+            {filename} · select the time axis and signal channels to analyze
           </p>
         </div>
       </div>

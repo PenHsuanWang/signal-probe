@@ -174,23 +174,21 @@ export default function Dashboard() {
   const plotDivs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // ── Auto-select signal from ?signal= URL param ────────────────────────────
+  const initialSelectionDoneRef = useRef(false);
   useEffect(() => {
+    if (initialSelectionDoneRef.current || signals.length === 0) return;
     const paramId = searchParams.get('signal');
-    if (paramId && signals.length > 0) {
-      const sig = signals.find((s) => s.id === paramId);
-      if (sig) {
-        if (sig.status === 'COMPLETED') {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setSelectedId(paramId);
-        } else if (sig.status === 'AWAITING_CONFIG' || sig.status === 'FAILED') {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setConfiguringId(paramId);
-        }
+    if (!paramId) return;
+    const sig = signals.find((s) => s.id === paramId);
+    if (sig) {
+      initialSelectionDoneRef.current = true;
+      if (sig.status === 'COMPLETED') {
+        setSelectedId(paramId);
+      } else if (sig.status === 'AWAITING_CONFIG' || sig.status === 'FAILED') {
+        setConfiguringId(paramId);
       }
     }
-  // Only run when signals load the first time (paramId is stable)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signals.length > 0 ? 'loaded' : 'empty']);
+  }, [searchParams, signals]);
 
   // ── Load groups list ───────────────────────────────────────────────────────
   useEffect(() => {
