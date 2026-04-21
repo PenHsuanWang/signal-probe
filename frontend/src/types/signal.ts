@@ -1,6 +1,6 @@
 // TypeScript interfaces mirroring backend Pydantic schemas
 
-export type ProcessingStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
+export type ProcessingStatus = "AWAITING_CONFIG" | "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
 export type SignalState = "IDLE" | "ACTIVE" | "OOC";
 
 export interface SignalMetadata {
@@ -93,4 +93,17 @@ export interface GroupMemberUpsert {
   display_order?: number;
   channel_colors?: Record<string, string>;
   time_offset_s?: number;
+}
+
+// ── Column configuration ─────────────────────────────────────────────────────
+
+export interface RawColumnsResponse {
+  columns: string[];
+  suggested_time_column: string | null;
+  suggested_signal_columns: string[];
+}
+
+export interface SignalProcessRequest {
+  time_column: string;
+  signal_columns: string[];
 }

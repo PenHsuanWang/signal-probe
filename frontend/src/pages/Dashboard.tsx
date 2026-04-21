@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plot } from '../lib/plot';
 import {
   Activity, UploadCloud, CheckCircle, Clock, XCircle,
-  RefreshCw, Layers,
+  RefreshCw, Layers, Settings2,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import FileUploader from '../components/FileUploader';
+import ColumnConfigurator from '../components/ColumnConfigurator';
 import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
 import { useSignals } from '../context/SignalsContext';
@@ -28,6 +30,7 @@ import type {
 // ── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
   const cfgMap = {
+    AWAITING_CONFIG: { color: 'text-amber-400',  label: 'Needs Config' },
     PENDING:    { color: 'text-zinc-400', label: 'Pending'    },
     PROCESSING: { color: 'text-blue-400', label: 'Processing' },
     COMPLETED:  { color: 'text-green-400', label: 'Completed' },
@@ -35,6 +38,7 @@ function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
   };
   const cfg = cfgMap[status];
   const icons = {
+    AWAITING_CONFIG: <Settings2 size={12} />,
     PENDING:    <Clock size={12} />,
     PROCESSING: <RefreshCw size={12} className="animate-spin" />,
     COMPLETED:  <CheckCircle size={12} />,
@@ -146,10 +150,12 @@ interface GroupMacroResult {
 export default function Dashboard() {
   const { signals, refresh } = useSignals();
   const { theme } = useTheme();
+  const [searchParams] = useSearchParams();
 
   // ── Signal mode state ──────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'signal' | 'group'>('signal');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [configuringId, setConfiguringId] = useState<string | null>(null);
   const [macroData, setMacroData] = useState<MacroViewResponse | null>(null);
   const [runChunks, setRunChunks] = useState<RunChunkResponse[]>([]);
   const [loadingMacro, setLoadingMacro] = useState(false);
@@ -166,6 +172,23 @@ export default function Dashboard() {
   const [groupVisibleKeys, setGroupVisibleKeys] = useState<Set<string>>(new Set());
 
   const plotDivs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // ── Auto-select signal from ?signal= URL param ────────────────────────────
+  const initialSelectionDoneRef = useRef(false);
+  useEffect(() => {
+    if (initialSelectionDoneRef.current || signals.length === 0) return;
+    const paramId = searchParams.get('signal');
+    if (!paramId) return;
+    const sig = signals.find((s) => s.id === paramId);
+    if (sig) {
+      initialSelectionDoneRef.current = true;
+      if (sig.status === 'COMPLETED') {
+        setSelectedId(paramId);
+      } else if (sig.status === 'AWAITING_CONFIG' || sig.status === 'FAILED') {
+        setConfiguringId(paramId);
+      }
+    }
+  }, [searchParams, signals]);
 
   // ── Load groups list ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -425,7 +448,15 @@ export default function Dashboard() {
             <>
               {showUploader && (
                 <div className="mb-4">
-                  <FileUploader onUploadComplete={(s) => { refresh(); setShowUploader(false); setSelectedId(s.id); }} />
+                  <FileUploader onUploadComplete={(s) => {
+                    refresh();
+                    setShowUploader(false);
+                    if (s.status === 'AWAITING_CONFIG') {
+                      setConfiguringId(s.id);
+                    } else {
+                      setSelectedId(s.id);
+                    }
+                  }} />
                 </div>
               )}
               {signals.length === 0 ? (
@@ -433,26 +464,46 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-1">
                   {signals.map((s) => (
-                    <button
-                      key={s.id}
-                      disabled={s.status !== 'COMPLETED'}
-                      onClick={() => setSelectedId(s.id)}
-                      className={`w-full text-left flex items-center justify-between px-3 py-2 rounded text-xs font-mono transition-colors
-                        ${selectedId === s.id
-                          ? 'bg-brand-500/15 border border-brand-500/30 text-zinc-100'
-                          : s.status === 'COMPLETED'
-                            ? 'hover:bg-zinc-800 text-zinc-300 border border-transparent cursor-pointer'
-                            : 'opacity-50 text-zinc-500 border border-transparent cursor-default'
-                        }`}
-                    >
-                      <span className="truncate max-w-[55%]">{s.original_filename}</span>
-                      <div className="flex items-center space-x-3 flex-shrink-0">
-                        {s.status === 'COMPLETED' && (
-                          <span className="text-zinc-600">{s.active_run_count}r · {s.ooc_count} OOC</span>
-                        )}
-                        <StatusBadge status={s.status} />
-                      </div>
-                    </button>
+                    <div key={s.id}>
+                      <button
+                        disabled={s.status !== 'COMPLETED' && s.status !== 'AWAITING_CONFIG' && s.status !== 'FAILED'}
+                        onClick={() => {
+                          if (s.status === 'COMPLETED') {
+                            setSelectedId(s.id);
+                            setConfiguringId(null);
+                          } else if (s.status === 'AWAITING_CONFIG' || s.status === 'FAILED') {
+                            setConfiguringId(configuringId === s.id ? null : s.id);
+                          }
+                        }}
+                        className={`w-full text-left flex items-center justify-between px-3 py-2 rounded text-xs font-mono transition-colors
+                          ${selectedId === s.id
+                            ? 'bg-brand-500/15 border border-brand-500/30 text-zinc-100'
+                            : s.status === 'AWAITING_CONFIG' || s.status === 'FAILED'
+                              ? 'hover:bg-amber-500/5 border border-amber-500/20 text-zinc-300 cursor-pointer'
+                              : s.status === 'COMPLETED'
+                                ? 'hover:bg-zinc-800 text-zinc-300 border border-transparent cursor-pointer'
+                                : 'opacity-50 text-zinc-500 border border-transparent cursor-default'
+                          }`}
+                      >
+                        <span className="truncate max-w-[55%]">{s.original_filename}</span>
+                        <div className="flex items-center space-x-3 flex-shrink-0">
+                          {s.status === 'COMPLETED' && (
+                            <span className="text-zinc-600">{s.active_run_count}r · {s.ooc_count} OOC</span>
+                          )}
+                          <StatusBadge status={s.status} />
+                        </div>
+                      </button>
+                      {/* Inline column configurator for AWAITING_CONFIG / FAILED signals */}
+                      {configuringId === s.id && (
+                        <div className="mt-1 ml-3">
+                          <ColumnConfigurator
+                            signalId={s.id}
+                            filename={s.original_filename}
+                            onConfigured={() => { setConfiguringId(null); refresh(); }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -546,6 +597,7 @@ export default function Dashboard() {
             </div>
           ) : !macroData ? (
             <div className="h-64 flex items-center justify-center font-sans text-xs" style={{ color: 'var(--sp-text-tertiary)' }}>
+              {selectedSignal?.status === 'AWAITING_CONFIG' && '⚙ Select columns in the panel above to begin processing.'}
               {selectedSignal?.status === 'PROCESSING' && '⏳ Processing — please wait…'}
               {selectedSignal?.status === 'PENDING' && '⏳ Queued for processing…'}
               {selectedSignal?.status === 'FAILED' && `✗ Failed: ${selectedSignal.error_message ?? 'unknown error'}`}

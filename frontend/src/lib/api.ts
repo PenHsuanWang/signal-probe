@@ -5,8 +5,10 @@ import type {
   GroupMemberUpsert,
   GroupUpdateRequest,
   MacroViewResponse,
+  RawColumnsResponse,
   RunChunkResponse,
   SignalMetadata,
+  SignalProcessRequest,
 } from '../types/signal';
 
 export const api = axios.create({
@@ -65,6 +67,16 @@ export async function renameSignal(id: string, newFilename: string): Promise<Sig
 
 export async function deleteSignal(id: string): Promise<void> {
   await api.delete(`/signals/${id}`);
+}
+
+export async function getRawColumns(id: string): Promise<RawColumnsResponse> {
+  const res = await api.get<RawColumnsResponse>(`/signals/${id}/raw-columns`);
+  return res.data;
+}
+
+export async function configureSignal(id: string, body: SignalProcessRequest): Promise<SignalMetadata> {
+  const res = await api.post<SignalMetadata>(`/signals/${id}/process`, body);
+  return res.data;
 }
 
 export async function getMacroView(id: string): Promise<MacroViewResponse> {

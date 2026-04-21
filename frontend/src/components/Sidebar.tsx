@@ -16,6 +16,7 @@ const NAV_ITEMS = [
 ];
 
 const STATUS_DOT: Record<SignalMetadata['status'], string> = {
+  AWAITING_CONFIG: 'bg-amber-500',
   COMPLETED:  'bg-green-500',
   PROCESSING: 'bg-blue-500 animate-pulse',
   PENDING:    'bg-yellow-500 animate-pulse',
