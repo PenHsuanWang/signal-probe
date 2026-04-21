@@ -1,8 +1,10 @@
-import { Settings, User, Info } from 'lucide-react';
+import { Settings, Sun, Moon, User, Info } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -11,70 +13,87 @@ export default function SettingsPage() {
       <div className="flex items-center gap-3">
         <Settings size={20} className="text-brand-500" />
         <div>
-          <h1 className="text-sm font-bold font-mono text-zinc-100 tracking-widest uppercase">Settings</h1>
-          <p className="text-xs font-mono text-zinc-500 mt-0.5">Account and application preferences</p>
+          <h1 className="text-sm font-semibold font-sans" style={{ color: 'var(--sp-text-primary)' }}>Settings</h1>
+          <p className="text-xs font-sans mt-0.5" style={{ color: 'var(--sp-text-secondary)' }}>Account and application preferences</p>
         </div>
       </div>
 
       {/* Account */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800">
+      <div className="rounded-lg overflow-hidden" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+        <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--sp-border)' }}>
           <User size={13} className="text-brand-500" />
-          <p className="text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest">Account</p>
+          <p className="text-[10px] font-sans font-semibold uppercase tracking-wide" style={{ color: 'var(--sp-text-tertiary)' }}>Account</p>
         </div>
-        <div className="divide-y divide-zinc-800/50">
+        <div className="divide-y" style={{ borderColor: 'var(--sp-border)' }}>
           <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-zinc-500">Email</span>
-            <span className="text-xs font-mono text-zinc-200">{user?.email}</span>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Email</span>
+            <span className="text-xs font-mono" style={{ color: 'var(--sp-text-primary)' }}>{user?.email}</span>
           </div>
           <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-zinc-500">Role</span>
-            <span className="text-xs font-mono">
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Role</span>
+            <span className="text-xs font-sans">
               {user?.is_superuser
                 ? <span className="text-yellow-400">Superuser</span>
-                : <span className="text-zinc-400">Analyst</span>}
+                : <span style={{ color: 'var(--sp-text-secondary)' }}>Analyst</span>}
             </span>
           </div>
           <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-zinc-500">Account status</span>
-            <span className={`text-xs font-mono ${user?.is_active ? 'text-green-400' : 'text-red-400'}`}>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Account status</span>
+            <span className={`text-xs font-sans ${user?.is_active ? 'text-green-400' : 'text-red-400'}`}>
               {user?.is_active ? 'Active' : 'Inactive'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Preferences — coming soon */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden opacity-50">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800">
+      {/* Display Preferences */}
+      <div className="rounded-lg overflow-hidden" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+        <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--sp-border)' }}>
           <Settings size={13} className="text-brand-500" />
-          <p className="text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest">Preferences</p>
-          <span className="ml-auto text-[10px] font-mono text-zinc-700">Coming soon</span>
+          <p className="text-[10px] font-sans font-semibold uppercase tracking-wide" style={{ color: 'var(--sp-text-tertiary)' }}>Display</p>
         </div>
-        <div className="divide-y divide-zinc-800/50">
-          {['Default chart theme', 'OOC threshold override', 'Auto-select on upload', 'Date format'].map((label) => (
-            <div key={label} className="px-4 py-3 flex items-center justify-between">
-              <span className="text-xs font-mono text-zinc-500">{label}</span>
-              <span className="text-xs font-mono text-zinc-700">—</span>
-            </div>
-          ))}
+        <div className="px-4 py-3 flex items-center justify-between">
+          <div>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-primary)' }}>Colour scheme</span>
+            <p className="text-[10px] font-sans mt-0.5" style={{ color: 'var(--sp-text-tertiary)' }}>
+              Affects charts, backgrounds, and all UI surfaces.
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-md p-0.5" style={{ background: 'var(--sp-surface-elevated)', border: '1px solid var(--sp-border)' }}>
+            <button
+              onClick={() => setTheme('dark')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-sans transition-all ${
+                theme === 'dark' ? 'bg-brand-500 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Moon size={12} /> Dark
+            </button>
+            <button
+              onClick={() => setTheme('light')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-sans transition-all ${
+                theme === 'light' ? 'bg-brand-500 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Sun size={12} /> Light
+            </button>
+          </div>
         </div>
       </div>
 
       {/* About */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800">
+      <div className="rounded-lg overflow-hidden" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+        <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--sp-border)' }}>
           <Info size={13} className="text-brand-500" />
-          <p className="text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest">About</p>
+          <p className="text-[10px] font-sans font-semibold uppercase tracking-wide" style={{ color: 'var(--sp-text-tertiary)' }}>About</p>
         </div>
-        <div className="divide-y divide-zinc-800/50">
+        <div className="divide-y" style={{ borderColor: 'var(--sp-border)' }}>
           <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-zinc-500">Application</span>
-            <span className="text-xs font-mono text-zinc-300">SIGNAL_PROBE</span>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Application</span>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-primary)' }}>Signal Probe</span>
           </div>
           <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-zinc-500">Version</span>
-            <span className="text-xs font-mono text-zinc-600">v0.1.0-alpha</span>
+            <span className="text-xs font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Version</span>
+            <span className="text-xs font-mono" style={{ color: 'var(--sp-text-tertiary)' }}>v0.1.0-alpha</span>
           </div>
         </div>
       </div>

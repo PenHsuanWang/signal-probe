@@ -23,15 +23,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-8">
-          <div className="max-w-md w-full bg-zinc-900 border border-red-500/30 rounded-lg p-6 space-y-4">
-            <h1 className="font-mono text-red-400 font-bold text-sm tracking-widest uppercase">
+        <div className="min-h-screen flex items-center justify-center p-8" style={{ backgroundColor: 'var(--sp-surface-primary)' }}>
+          <div className="max-w-md w-full rounded-lg border border-red-500/30 p-6 space-y-4" style={{ backgroundColor: 'var(--sp-surface-secondary)' }}>
+            <h1 className="font-sans text-red-400 font-semibold text-sm">
               ⚠ Unexpected Error
             </h1>
-            <p className="font-mono text-zinc-400 text-xs break-all">{this.state.message}</p>
+            <p className="font-mono text-xs break-all" style={{ color: 'var(--sp-text-secondary)' }}>{this.state.message}</p>
             <button
               onClick={() => window.location.reload()}
-              className="w-full py-2 text-xs font-mono bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded transition-colors"
+              className="w-full py-2 text-sm font-sans rounded transition-colors"
+              style={{ backgroundColor: 'var(--sp-surface-elevated)', color: 'var(--sp-text-primary)' }}
             >
               Reload page
             </button>
