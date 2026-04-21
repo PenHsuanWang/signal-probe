@@ -46,6 +46,17 @@ class SignalRenameRequest(BaseModel):
     original_filename: str = Field(..., min_length=1, max_length=500)
 
 
+class RawColumnsResponse(BaseModel):
+    columns: list[str]
+    suggested_time_column: str | None
+    suggested_signal_columns: list[str]
+
+
+class SignalProcessRequest(BaseModel):
+    time_column: str = Field(..., min_length=1, max_length=200)
+    signal_columns: list[str] = Field(..., min_length=1)
+
+
 # ── Macro view ─────────────────────────────────────────────────────────────────
 
 

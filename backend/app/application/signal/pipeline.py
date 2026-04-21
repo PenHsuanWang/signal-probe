@@ -128,12 +128,35 @@ def _read_stacked_signal_file(
 
 def _read_wide_signal_file(
     df: pl.DataFrame,
+    time_column: str | None = None,
+    signal_columns: list[str] | None = None,
 ) -> tuple[list[float], dict[str, list[float]]]:
     """Parse a wide-format CSV/Parquet into (timestamps_s, channels).
 
-    The first numeric/temporal column is treated as the time axis; all
-    remaining numeric columns are value channels.
+    When *time_column* and *signal_columns* are provided (user-selected), those
+    columns are used directly.  Otherwise the legacy auto-detection heuristic
+    applies: first numeric/temporal column is the time axis; the rest are channels.
     """
+    if time_column is not None and signal_columns:
+        # User explicitly specified which columns to use
+        missing = [c for c in [time_column, *signal_columns] if c not in df.columns]
+        if missing:
+            raise ValueError(f"Columns not found in file: {missing}")
+        cast_exprs = [pl.col(time_column).cast(pl.Float64).alias(time_column)] + [
+            pl.col(c).cast(pl.Float64) for c in signal_columns
+        ]
+        df = df.select(cast_exprs).drop_nulls()
+        if df.is_empty():
+            raise ValueError(
+                "File contains no valid numeric data points after cleaning."
+            )
+        ts: list[float] = df[time_column].to_list()
+        t0 = ts[0]
+        ts = [t - t0 for t in ts]
+        channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_columns}
+        return ts, channels
+
+    # ── Legacy auto-detection ─────────────────────────────────────────────────
     numeric_cols = [
         c for c, t in zip(df.columns, df.dtypes) if t.is_numeric() or t.is_temporal()
     ]
@@ -161,23 +184,30 @@ def _read_wide_signal_file(
     if df.is_empty():
         raise ValueError("File contains no valid numeric data points after cleaning.")
 
-    ts: list[float] = df[time_col].to_list()
-    t0 = ts[0]
-    ts = [t - t0 for t in ts]
+    ts2: list[float] = df[time_col].to_list()
+    t0b = ts2[0]
+    ts2 = [t - t0b for t in ts2]
 
-    channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
-    return ts, channels
+    channels2: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
+    return ts2, channels2
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
 
 
-def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list]]:
+def _read_signal_file(
+    raw_path: str,
+    time_column: str | None = None,
+    signal_columns: list[str] | None = None,
+) -> tuple[list[float], dict[str, list]]:
     """Read a CSV or Parquet file and return (timestamps_s, channels).
 
     Automatically detects whether the file is in long/stacked format
     (``datetime``, ``signal_name``, ``signal_value`` columns) or the legacy
     wide format (first column = time axis, remaining = channels).
+
+    When *time_column* and *signal_columns* are provided the wide-format reader
+    uses them directly (stacked format is still auto-handled via column pivot).
 
     Returns:
         timestamps_s: Elapsed-seconds list (first point = 0.0).
@@ -189,7 +219,9 @@ def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list]]:
     if _is_stacked_format(df):
         logger.info("Detected long/stacked CSV format for %s", raw_path)
         return _read_stacked_signal_file(df)
-    return _read_wide_signal_file(df)
+    return _read_wide_signal_file(
+        df, time_column=time_column, signal_columns=signal_columns
+    )
 
 
 async def run_pipeline(
@@ -197,6 +229,8 @@ async def run_pipeline(
     raw_file_path: str,
     session_factory,  # async_sessionmaker
     storage: IStorageAdapter,
+    time_column: str | None = None,
+    signal_columns: list[str] | None = None,
 ) -> None:
     """Entry point called by BackgroundTasks."""
     async with session_factory() as session:
@@ -205,7 +239,11 @@ async def run_pipeline(
         await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
-            timestamps, channels = _read_signal_file(raw_file_path)
+            timestamps, channels = _read_signal_file(
+                raw_file_path,
+                time_column=time_column,
+                signal_columns=signal_columns,
+            )
             channel_names = list(channels.keys())
 
             # Classify + segment on the primary (first) channel

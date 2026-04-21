@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Database, UploadCloud, RefreshCw, Search, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Database, UploadCloud, RefreshCw, Search, Pencil, Trash2, Check, X, Settings2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import FileUploader from '../components/FileUploader';
+import ColumnConfigurator from '../components/ColumnConfigurator';
 import { useSignals } from '../context/SignalsContext';
 import { deleteSignal, renameSignal } from '../lib/api';
 import { scientificColor } from '../lib/chartTheme';
@@ -9,17 +10,19 @@ import type { SignalMetadata } from '../types/signal';
 
 function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
   const cls: Record<SignalMetadata['status'], string> = {
+    AWAITING_CONFIG: 'text-amber-400  bg-amber-400/10',
     PENDING:    'text-yellow-400 bg-yellow-400/10',
     PROCESSING: 'text-blue-400   bg-blue-400/10',
     COMPLETED:  'text-green-400  bg-green-400/10',
     FAILED:     'text-red-400    bg-red-400/10',
   };
   const labels: Record<SignalMetadata['status'], string> = {
-    PENDING: 'Pending', PROCESSING: 'Processing', COMPLETED: 'Completed', FAILED: 'Failed',
+    AWAITING_CONFIG: 'Needs Config', PENDING: 'Pending', PROCESSING: 'Processing', COMPLETED: 'Completed', FAILED: 'Failed',
   };
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-sans font-semibold ${cls[status]}`}>
       {status === 'PROCESSING' && <RefreshCw size={9} className="animate-spin" />}
+      {status === 'AWAITING_CONFIG' && <Settings2 size={9} />}
       {labels[status]}
     </span>
   );
@@ -51,6 +54,7 @@ export default function SignalsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [configuringId, setConfiguringId] = useState<string | null>(null);
 
   const filtered = signals.filter((s) =>
     s.original_filename.toLowerCase().includes(search.toLowerCase())
@@ -156,105 +160,126 @@ export default function SignalsPage() {
         ) : (
           <div className="divide-y" style={{ borderColor: 'var(--sp-border)' }}>
             {filtered.map((s) => (
-              <div
-                key={s.id}
-                className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-3 hover:bg-zinc-800/20 transition-colors items-center"
-              >
-                {/* Filename / Rename inline */}
-                <div className="min-w-0">
-                  {renamingId === s.id ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        autoFocus
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleRenameSubmit(s);
-                          if (e.key === 'Escape') setRenamingId(null);
-                        }}
-                        className="flex-1 min-w-0 bg-zinc-800 border border-brand-500/40 rounded px-2 py-0.5 text-xs font-mono text-zinc-100 focus:outline-none"
-                      />
-                      <button onClick={() => handleRenameSubmit(s)} className="text-green-400 hover:text-green-300 flex-shrink-0">
-                        <Check size={12} />
-                      </button>
-                      <button onClick={() => setRenamingId(null)} className="text-zinc-500 hover:text-zinc-300 flex-shrink-0">
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-xs font-mono truncate block" title={s.original_filename}
-                          style={{ color: 'var(--sp-text-primary)' }}>
-                      {s.original_filename}
-                    </span>
-                  )}
-                </div>
+              <div key={s.id}>
+                <div
+                  className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-3 hover:bg-zinc-800/20 transition-colors items-center"
+                >
+                  {/* Filename / Rename inline */}
+                  <div className="min-w-0">
+                    {renamingId === s.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameSubmit(s);
+                            if (e.key === 'Escape') setRenamingId(null);
+                          }}
+                          className="flex-1 min-w-0 bg-zinc-800 border border-brand-500/40 rounded px-2 py-0.5 text-xs font-mono text-zinc-100 focus:outline-none"
+                        />
+                        <button onClick={() => handleRenameSubmit(s)} className="text-green-400 hover:text-green-300 flex-shrink-0">
+                          <Check size={12} />
+                        </button>
+                        <button onClick={() => setRenamingId(null)} className="text-zinc-500 hover:text-zinc-300 flex-shrink-0">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs font-mono truncate block" title={s.original_filename}
+                            style={{ color: 'var(--sp-text-primary)' }}>
+                        {s.original_filename}
+                      </span>
+                    )}
+                  </div>
 
-                {/* Channel pills */}
-                <div>
-                  {s.status === 'COMPLETED' && s.channel_names?.length > 0
-                    ? <ChannelPills names={s.channel_names} />
-                    : <span className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>—</span>
-                  }
-                </div>
+                  {/* Channel pills */}
+                  <div>
+                    {s.status === 'COMPLETED' && s.channel_names?.length > 0
+                      ? <ChannelPills names={s.channel_names} />
+                      : <span className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>—</span>
+                    }
+                  </div>
 
-                <span className="text-xs font-mono" style={{ color: 'var(--sp-text-secondary)' }}>
-                  {s.status === 'COMPLETED' ? `${s.active_run_count}r` : '—'}
-                </span>
-                <span className={`text-xs font-mono ${s.ooc_count > 0 ? 'text-red-400' : ''}`}
-                      style={s.ooc_count > 0 ? {} : { color: 'var(--sp-text-secondary)' }}>
-                  {s.status === 'COMPLETED' ? s.ooc_count : '—'}
-                </span>
-                <div><StatusBadge status={s.status} /></div>
-                <span className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>
-                  {new Date(s.created_at).toLocaleDateString()}
-                </span>
+                  <span className="text-xs font-mono" style={{ color: 'var(--sp-text-secondary)' }}>
+                    {s.status === 'COMPLETED' ? `${s.active_run_count}r` : '—'}
+                  </span>
+                  <span className={`text-xs font-mono ${s.ooc_count > 0 ? 'text-red-400' : ''}`}
+                        style={s.ooc_count > 0 ? {} : { color: 'var(--sp-text-secondary)' }}>
+                    {s.status === 'COMPLETED' ? s.ooc_count : '—'}
+                  </span>
+                  <div><StatusBadge status={s.status} /></div>
+                  <span className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>
+                    {new Date(s.created_at).toLocaleDateString()}
+                  </span>
 
-                {/* Actions */}
-                <div className="flex items-center gap-2">
-                  {s.status === 'COMPLETED' && (
-                    <button
-                      onClick={() => navigate('/')}
-                      className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
-                    >
-                      Explore →
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setRenamingId(s.id); setRenameValue(s.original_filename); }}
-                    className="text-zinc-500 hover:text-zinc-200 transition-colors"
-                    title="Rename"
-                  >
-                    <Pencil size={12} />
-                  </button>
-
-                  {/* Delete with inline confirm */}
-                  {confirmDeleteId === s.id ? (
-                    <div className="flex items-center gap-1">
+                  {/* Actions */}
+                  <div className="flex items-center gap-2">
+                    {s.status === 'COMPLETED' && (
                       <button
-                        disabled={deletingId === s.id}
-                        onClick={() => handleDelete(s.id)}
-                        className="text-[10px] font-sans text-red-400 hover:text-red-300 disabled:opacity-50"
+                        onClick={() => navigate(`/?signal=${s.id}`)}
+                        className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
                       >
-                        {deletingId === s.id ? '…' : 'Yes'}
+                        Explore →
                       </button>
-                      <span style={{ color: 'var(--sp-text-tertiary)' }}>/</span>
+                    )}
+                    {(s.status === 'AWAITING_CONFIG' || s.status === 'FAILED') && (
                       <button
-                        onClick={() => setConfirmDeleteId(null)}
-                        className="text-[10px] font-sans text-zinc-500 hover:text-zinc-300"
+                        onClick={() => setConfiguringId(configuringId === s.id ? null : s.id)}
+                        className="text-[10px] font-sans text-amber-400 hover:text-amber-300 transition-colors flex items-center gap-0.5"
                       >
-                        No
+                        <Settings2 size={10} />
+                        {s.status === 'FAILED' ? 'Retry' : 'Configure'}
                       </button>
-                    </div>
-                  ) : (
+                    )}
                     <button
-                      onClick={() => setConfirmDeleteId(s.id)}
-                      className="text-zinc-600 hover:text-red-400 transition-colors"
-                      title="Delete"
+                      onClick={() => { setRenamingId(s.id); setRenameValue(s.original_filename); }}
+                      className="text-zinc-500 hover:text-zinc-200 transition-colors"
+                      title="Rename"
                     >
-                      <Trash2 size={12} />
+                      <Pencil size={12} />
                     </button>
-                  )}
+
+                    {/* Delete with inline confirm */}
+                    {confirmDeleteId === s.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          disabled={deletingId === s.id}
+                          onClick={() => handleDelete(s.id)}
+                          className="text-[10px] font-sans text-red-400 hover:text-red-300 disabled:opacity-50"
+                        >
+                          {deletingId === s.id ? '…' : 'Yes'}
+                        </button>
+                        <span style={{ color: 'var(--sp-text-tertiary)' }}>/</span>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-[10px] font-sans text-zinc-500 hover:text-zinc-300"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteId(s.id)}
+                        className="text-zinc-600 hover:text-red-400 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Inline column configurator */}
+                {configuringId === s.id && (
+                  <div className="px-4 pb-4">
+                    <ColumnConfigurator
+                      signalId={s.id}
+                      filename={s.original_filename}
+                      onConfigured={() => { setConfiguringId(null); refresh(); }}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

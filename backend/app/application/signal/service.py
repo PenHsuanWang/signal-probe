@@ -16,6 +16,7 @@ from app.domain.signal.schemas import (
     ChannelChunkData,
     ChannelMacroData,
     MacroViewResponse,
+    RawColumnsResponse,
     RunBound,
     RunChunkResponse,
     SignalMetadataResponse,
@@ -38,10 +39,13 @@ class SignalService:
         owner_id: uuid.UUID,
         filename: str,
         file_bytes: bytes,
-        session_factory: async_sessionmaker,
     ) -> SignalMetadata:
-        from app.application.signal.pipeline import run_pipeline
+        """Persist the raw file and return metadata in AWAITING_CONFIG state.
 
+        The processing pipeline is *not* started here — the caller must
+        invoke :meth:`configure_and_process` once the user has selected
+        the time column and signal columns.
+        """
         ext = os.path.splitext(filename)[1].lower() or ".csv"
         signal = await self.repo.create_signal(
             owner_id=owner_id,
@@ -57,17 +61,105 @@ class SignalService:
         from app.domain.signal.models import SignalMetadata as SM
 
         await self.session.execute(
-            sa_update(SM).where(SM.id == signal.id).values(file_path=abs_path)
+            sa_update(SM)
+            .where(SM.id == signal.id)
+            .values(file_path=abs_path, status=ProcessingStatus.AWAITING_CONFIG)
         )
         await self.session.commit()
         await self.session.refresh(signal)
 
+        return signal
+
+    # ── Raw column preview ───────────────────────────────────────────────────
+
+    async def get_raw_columns(self, signal_id: uuid.UUID) -> RawColumnsResponse:
+        """Return column headers from the raw uploaded file.
+
+        For wide-format files: all columns are returned.  The first
+        numeric/temporal column is suggested as the time axis; the rest
+        as signal columns.
+
+        For stacked-format files (datetime/signal_name/signal_value schema):
+        the unique values in ``signal_name`` are returned as available channels
+        with ``datetime`` suggested as the time column.
+        """
+        from app.application.signal.pipeline import (
+            _is_stacked_format,
+            _load_raw_dataframe,
+        )
+
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise ValueError("Signal not found")
+        if not signal.file_path:
+            raise ValueError("Raw file not available")
+
+        df = _load_raw_dataframe(signal.file_path)
+
+        if _is_stacked_format(df):
+            df_norm = df.rename({c: c.lower() for c in df.columns})
+            signal_names = df_norm["signal_name"].drop_nulls().unique().sort().to_list()
+            return RawColumnsResponse(
+                columns=signal_names,
+                suggested_time_column="datetime",
+                suggested_signal_columns=signal_names,
+            )
+
+        all_cols = df.columns
+        numeric_cols = [
+            c
+            for c, t in zip(df.columns, df.dtypes)
+            if t.is_numeric() or t.is_temporal()
+        ]
+        suggested_time = (
+            numeric_cols[0] if numeric_cols else (all_cols[0] if all_cols else None)
+        )
+        suggested_signals = numeric_cols[1:] if len(numeric_cols) > 1 else numeric_cols
+        return RawColumnsResponse(
+            columns=all_cols,
+            suggested_time_column=suggested_time,
+            suggested_signal_columns=suggested_signals,
+        )
+
+    # ── Configure and start pipeline ─────────────────────────────────────────
+
+    async def configure_and_process(
+        self,
+        signal_id: uuid.UUID,
+        time_column: str,
+        signal_columns: list[str],
+        session_factory: async_sessionmaker,
+    ) -> SignalMetadata:
+        """Validate column selection and kick off the processing pipeline."""
+        from app.application.signal.pipeline import run_pipeline
+
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise ValueError("Signal not found")
+        if signal.status not in (
+            ProcessingStatus.AWAITING_CONFIG,
+            ProcessingStatus.FAILED,
+        ):
+            raise ValueError(
+                f"Signal cannot be (re-)configured in status '{signal.status}'"
+            )
+        if not signal.file_path:
+            raise ValueError("Raw file not available")
+
         task = asyncio.create_task(
-            run_pipeline(signal.id, abs_path, session_factory, self.storage)
+            run_pipeline(
+                signal.id,
+                signal.file_path,
+                session_factory,
+                self.storage,
+                time_column=time_column,
+                signal_columns=signal_columns,
+            )
         )
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
+        await self.session.refresh(signal)
         return signal
 
     # ── List ────────────────────────────────────────────────────────────────

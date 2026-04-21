@@ -13,8 +13,10 @@ from app.application.signal.service import SignalService
 from app.db.session import AsyncSessionLocal
 from app.domain.signal.schemas import (
     MacroViewResponse,
+    RawColumnsResponse,
     RunChunkResponse,
     SignalMetadataResponse,
+    SignalProcessRequest,
     SignalRenameRequest,
 )
 from app.presentation.api.dependencies import CurrentUser, DbSession, StorageDep
@@ -46,7 +48,6 @@ async def upload_signal(
         owner_id=current_user.id,
         filename=file.filename or "upload.csv",
         file_bytes=data,
-        session_factory=AsyncSessionLocal,
     )
     return SignalMetadataResponse.model_validate(signal)
 
@@ -107,6 +108,51 @@ async def delete_signal(
     deleted = await svc.delete_signal(signal_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Signal not found")
+
+
+@router.get("/{signal_id}/raw-columns", response_model=RawColumnsResponse)
+async def get_raw_columns(
+    signal_id: uuid.UUID,
+    session: DbSession,
+    storage: StorageDep,
+    current_user: CurrentUser,
+) -> RawColumnsResponse:
+    svc = SignalService(session, storage)
+    signal = await svc.get_signal(signal_id)
+    if signal is None or signal.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    try:
+        return await svc.get_raw_columns(signal_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/{signal_id}/process",
+    response_model=SignalMetadataResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def process_signal(
+    signal_id: uuid.UUID,
+    body: SignalProcessRequest,
+    session: DbSession,
+    storage: StorageDep,
+    current_user: CurrentUser,
+) -> SignalMetadataResponse:
+    svc = SignalService(session, storage)
+    signal = await svc.get_signal(signal_id)
+    if signal is None or signal.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    try:
+        result = await svc.configure_and_process(
+            signal_id,
+            time_column=body.time_column,
+            signal_columns=body.signal_columns,
+            session_factory=AsyncSessionLocal,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return SignalMetadataResponse.model_validate(result)
 
 
 @router.get("/{signal_id}/macro", response_model=MacroViewResponse)
