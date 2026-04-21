@@ -34,7 +34,7 @@ export default function Register() {
     } catch (err: any) {
       const detail = err.response?.data?.detail;
       if (Array.isArray(detail)) {
-        setError(detail.map((d: any) => d.msg).join('; '));
+        setError(detail.map((d: any) => d.msg).filter(Boolean).join('; ') || 'Failed to register');
       } else {
         setError(detail || 'Failed to register');
       }
