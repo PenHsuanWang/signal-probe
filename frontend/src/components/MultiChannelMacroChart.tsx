@@ -1,8 +1,14 @@
 import { useMemo } from 'react';
 import { Plot } from '../lib/plot';
 import type { MacroViewResponse, RunBound } from '../types/signal';
-import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
+import { buildChartTheme, OOC_MARKER } from '../lib/chartTheme';
 import type { Theme } from '../context/ThemeContext';
+
+/** Single high-contrast dark-blue used for all channel lines. */
+const SERIES_COLOR = '#1a3a6b';
+
+/** Vertical inset (in paper-space units) for top-left panel title annotations. */
+const ANNOTATION_VERTICAL_INSET = 0.005;
 
 interface Props {
   macro: MacroViewResponse;
@@ -32,8 +38,6 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
   });
 
   const traces: Plotly.Data[] = channels.flatMap((ch, i) => {
-    const origIdx = macro.channels.findIndex((c) => c.channel_name === ch.channel_name);
-    const color = scientificColor(origIdx);
     const yaxisKey = i === 0 ? 'y' : `y${i + 1}`;
     const oocX = macro.x.filter((_, j) => ch.states[j] === 'OOC');
     const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
@@ -41,7 +45,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
       {
         x: macro.x, y: ch.y, type: 'scattergl', mode: 'lines',
         name: ch.channel_name, xaxis: 'x', yaxis: yaxisKey,
-        line: { color, width: 1.5 },
+        line: { color: SERIES_COLOR, width: 1.5 },
         hovertemplate: `%{y:.4g}<extra>${ch.channel_name}</extra>`,
       } as Plotly.Data,
       ...(oocX.length > 0 ? [{
@@ -75,22 +79,56 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
       }))
     );
 
+    // Thin solid border drawn around each panel's paper-space bounding box.
+    const borderColor = isLight ? '#1a1a1a' : '#4b5563';
+    const borderShapes: Partial<Plotly.Shape>[] = channels.map((_, i) => ({
+      type: 'rect' as const,
+      xref: 'paper' as const,
+      yref: 'paper' as const,
+      x0: 0, x1: 1,
+      y0: domains[i][0], y1: domains[i][1],
+      fillcolor: 'rgba(0,0,0,0)',
+      line: { width: 1, color: borderColor },
+      layer: 'above' as const,
+    }));
+
     const axisColor = isLight ? '#1a1a1a' : '#9ca3af';
-    const gridColor = isLight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
+    const gridColor = isLight ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.05)';
     const sliderBg = isLight ? '#f1f3f5' : '#18181b';
     const sliderBorder = isLight ? '#dee2e6' : '#3f3f46';
+
+    // Channel-name annotations placed just inside the top-left corner of each panel.
+    const annotations: Partial<Plotly.Annotations>[] = channels.map((ch, i) => ({
+      text: ch.channel_name,
+      x: 0.01,
+      y: domains[i][1] - ANNOTATION_VERTICAL_INSET,
+      xref: 'paper' as const,
+      yref: 'paper' as const,
+      xanchor: 'left' as const,
+      yanchor: 'top' as const,
+      showarrow: false,
+      font: {
+        size: 11,
+        family: 'Inter, ui-sans-serif, sans-serif',
+        color: axisColor,
+      },
+    }));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const l: Record<string, any> = {
       ...base,
       margin: { t: 8, r: 16, l: 56, b: 60 },
-      shapes: innerShapes,
+      shapes: [...borderShapes, ...innerShapes],
+      annotations,
       xaxis: {
         ...base.xaxis,
         domain: [0, 1],
         anchor: N > 1 ? `y${N}` : 'y',
         color: axisColor,
         gridcolor: gridColor,
+        showgrid: true,
+        griddash: 'dash',
+        tickangle: -45,
         title: { text: 'Time (s)', font: { size: 12, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor } },
         showspikes: true,
         spikemode: 'across',
@@ -107,14 +145,15 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
       },
     };
 
-    channels.forEach((ch, i) => {
-      const origIdx = macro.channels.findIndex((c) => c.channel_name === ch.channel_name);
+    channels.forEach((_, i) => {
       const axKey = i === 0 ? 'yaxis' : `yaxis${i + 1}`;
       l[axKey] = {
         domain: domains[i],
         anchor: 'x',
         color: axisColor,
         gridcolor: gridColor,
+        showgrid: true,
+        griddash: 'dash',
         zerolinecolor: isLight ? '#1a1a1a' : '#6b7280',
         ticks: 'inside',
         ticklen: 4,
@@ -123,12 +162,8 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
         linecolor: isLight ? '#1a1a1a' : '#4b5563',
         linewidth: 1,
         showline: true,
-        mirror: isLight,
-        title: {
-          text: ch.channel_name,
-          font: { size: 11, family: 'Inter, ui-sans-serif, sans-serif', color: scientificColor(origIdx) },
-          standoff: 6,
-        },
+        mirror: true,
+        title: { text: '' },
       };
     });
 
