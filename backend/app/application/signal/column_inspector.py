@@ -28,6 +28,16 @@ _TIME_NAME_RE = re.compile(
     r"\b(time|timestamp|ts|datetime|date|epoch|t)\b", re.IGNORECASE
 )
 
+# Required columns (lower-cased) that identify a long/stacked-format CSV.
+_STACKED_REQUIRED_COLS = frozenset({"datetime", "signal_name", "signal_value"})
+
+# Maps lower-cased non-standard column names → canonical stacked-format names.
+# Keep in sync with pipeline._STACKED_COL_ALIASES.
+_STACKED_COL_ALIASES: dict[str, str] = {
+    "measurement_datetime": "datetime",
+    "measurement_value": "signal_value",
+}
+
 
 class ColumnInspector:
     """Inspect raw CSV / Parquet column metadata without full pipeline execution."""
@@ -48,6 +58,64 @@ class ColumnInspector:
         if df.is_empty() and len(df.columns) == 0:
             raise ValueError("File contains no columns.")
         return [self._describe_column(df, col) for col in df.columns]
+
+    def detect_csv_format(self, raw_path: str) -> tuple[str, list[str]]:
+        """Detect whether the file is wide or stacked format.
+
+        For stacked format, also returns all unique signal names found in the
+        ``signal_name`` column by reading only that column from the full file
+        (efficient even for large files).
+
+        Args:
+            raw_path: Absolute path to the raw uploaded file.
+
+        Returns:
+            A ``(csv_format, stacked_signal_names)`` tuple where *csv_format* is
+            either ``"wide"`` or ``"stacked"``, and *stacked_signal_names* is a
+            sorted list of unique signal names (empty for wide format).
+        """
+        # Read just the header row to check column names cheaply.
+        ext = os.path.splitext(raw_path)[1].lower()
+        if ext in (".parquet", ".pq"):
+            header_df = pl.read_parquet(raw_path).head(1)
+        else:
+            header_df = pl.read_csv(
+                raw_path, n_rows=1, infer_schema_length=1, ignore_errors=True
+            )
+
+        lower_cols = {
+            _STACKED_COL_ALIASES.get(c.lower(), c.lower()) for c in header_df.columns
+        }
+        if not _STACKED_REQUIRED_COLS.issubset(lower_cols):
+            return "wide", []
+
+        # Stacked format detected — find the actual column name for signal_name.
+        # The column may still carry its original (pre-alias) name in the file,
+        # so resolve via _STACKED_COL_ALIASES for future-proofing.
+        signal_name_col = next(
+            c
+            for c in header_df.columns
+            if _STACKED_COL_ALIASES.get(c.lower(), c.lower()) == "signal_name"
+        )
+
+        # Read only the signal_name column to enumerate all unique channel names.
+        if ext in (".parquet", ".pq"):
+            names_df = pl.read_parquet(raw_path, columns=[signal_name_col])
+        else:
+            names_df = pl.read_csv(
+                raw_path,
+                columns=[signal_name_col],
+                infer_schema_length=500,
+                ignore_errors=True,
+            )
+
+        signal_names: list[str] = sorted(
+            # Cast to str defensively: signal_name values should always be strings
+            # but a CSV with a numeric-looking column may be inferred as int/float.
+            str(v)
+            for v in names_df[signal_name_col].drop_nulls().unique().to_list()
+        )
+        return "stacked", signal_names
 
     # ── Private helpers ──────────────────────────────────────────────────────
 

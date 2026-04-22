@@ -6,9 +6,14 @@ Covers:
 - Stacked reader: outer-join alignment when channels have different time ranges
 - Stacked reader: deduplication of duplicate (datetime, signal_name) rows
 - Stacked reader: case-insensitive column detection
+- Stacked reader: channel_filter selects a subset of channels
+- Stacked reader: channel_filter with all-unknown names raises ValueError
 - Wide-format reader: backward-compatible behaviour (unchanged path)
 - Dispatcher: routes to correct reader based on format
 - Edge cases: single channel in stacked format, empty file handling
+- ColumnInspector.detect_csv_format: detects wide vs stacked, enumerates names
+- ProcessSignalRequest: model validator rejects invalid combinations
+- Alias column names: measurement_datetime/measurement_value are treated as stacked
 """
 
 import os
@@ -44,6 +49,40 @@ def _write_stacked_csv(rows: list[tuple], path: str) -> None:
         f.write("datetime,signal_name,signal_value\n")
         for dt, name, val in rows:
             f.write(f"{dt},{name},{val}\n")
+
+
+def _write_alias_stacked_csv(rows: list[tuple], path: str) -> None:
+    """Write a stacked CSV using vendor alias column names.
+
+    Mimics files that use ``measurement_datetime`` / ``measurement_value``
+    (plus extra ``equipment`` and ``unit`` columns) instead of the canonical
+    ``datetime`` / ``signal_value`` names.
+    """
+    with open(path, "w") as f:
+        f.write("equipment,signal_name,measurement_datetime,measurement_value,unit\n")
+        for dt, name, val in rows:
+            f.write(f"MACHINE|CH1,{name},{dt},{val},psig\n")
+
+
+def _make_alias_stacked_df(rows: list[tuple]) -> pl.DataFrame:
+    """Build a stacked DataFrame with alias column names.
+
+    Uses ``measurement_datetime`` / ``measurement_value`` instead of the
+    canonical ``datetime`` / ``signal_value``, plus extra ``equipment`` and
+    ``unit`` columns — matching the vendor CSV format described in ADR-009.
+    """
+    datetimes, names, values = zip(*rows)
+    return pl.DataFrame(
+        {
+            "equipment": ["MACHINE|CH1"] * len(datetimes),
+            "signal_name": list(names),
+            "measurement_datetime": pl.Series(list(datetimes)).str.to_datetime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "measurement_value": pl.Series(list(values), dtype=pl.Float64),
+            "unit": ["psig"] * len(datetimes),
+        }
+    )
 
 
 def _write_wide_csv(rows: list[tuple], header: list[str], path: str) -> None:
@@ -370,3 +409,355 @@ class TestClassifierNullSafety:
         values = [0.0] * 60 + [None] + [0.0] * 60
         states = classify(values)
         assert states[60] == "IDLE"
+
+
+# ── channel_filter in _read_stacked_signal_file ───────────────────────────────
+
+
+class TestReadStackedChannelFilter:
+    """Verify the channel_filter parameter selects a subset of channels."""
+
+    def test_filter_single_channel(self):
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:01:00", "ch_a", 2.0),
+            ("2026-01-01 00:00:00", "ch_b", 10.0),
+            ("2026-01-01 00:01:00", "ch_b", 20.0),
+        ]
+        df = _make_stacked_df(rows)
+        _, channels = _read_stacked_signal_file(df, channel_filter=["ch_a"])
+        assert list(channels.keys()) == ["ch_a"]
+        assert channels["ch_a"] == [1.0, 2.0]
+
+    def test_filter_subset_of_channels(self):
+        rows = [
+            ("2026-01-01 00:00:00", "alpha", 1.0),
+            ("2026-01-01 00:00:00", "beta", 2.0),
+            ("2026-01-01 00:00:00", "gamma", 3.0),
+        ]
+        df = _make_stacked_df(rows)
+        _, channels = _read_stacked_signal_file(df, channel_filter=["alpha", "gamma"])
+        assert set(channels.keys()) == {"alpha", "gamma"}
+        assert "beta" not in channels
+
+    def test_filter_none_includes_all_channels(self):
+        rows = [
+            ("2026-01-01 00:00:00", "x", 1.0),
+            ("2026-01-01 00:00:00", "y", 2.0),
+        ]
+        df = _make_stacked_df(rows)
+        _, channels = _read_stacked_signal_file(df, channel_filter=None)
+        assert set(channels.keys()) == {"x", "y"}
+
+    def test_filter_with_unknown_names_raises(self):
+        rows = [("2026-01-01 00:00:00", "real_ch", 1.0)]
+        df = _make_stacked_df(rows)
+        with pytest.raises(ValueError, match="None of the requested channel names"):
+            _read_stacked_signal_file(df, channel_filter=["nonexistent"])
+
+    def test_filter_preserves_timestamps(self):
+        """Timestamps cover the union of all channels even after filtering."""
+        rows = [
+            ("2026-01-01 00:00:00", "a", 1.0),
+            ("2026-01-01 00:01:00", "a", 2.0),
+            ("2026-01-01 00:02:00", "a", 3.0),
+            ("2026-01-01 00:00:00", "b", 10.0),
+            ("2026-01-01 00:01:00", "b", 20.0),
+            ("2026-01-01 00:02:00", "b", 30.0),
+        ]
+        df = _make_stacked_df(rows)
+        ts, channels = _read_stacked_signal_file(df, channel_filter=["a"])
+        assert len(ts) == 3
+        assert ts == pytest.approx([0.0, 60.0, 120.0])
+        assert channels["a"] == [1.0, 2.0, 3.0]
+
+
+# ── ColumnInspector.detect_csv_format ────────────────────────────────────────
+
+
+class TestColumnInspectorDetectFormat:
+    """Verify format detection and stacked signal-name enumeration."""
+
+    def test_detects_wide_format(self, tmp_path):
+        csv_path = str(tmp_path / "wide.csv")
+        _write_wide_csv(
+            [(0, 1.0, 10.0), (1, 2.0, 20.0)],
+            header=["time", "ch_a", "ch_b"],
+            path=csv_path,
+        )
+        from app.application.signal.column_inspector import ColumnInspector
+
+        fmt, names = ColumnInspector().detect_csv_format(csv_path)
+        assert fmt == "wide"
+        assert names == []
+
+    def test_detects_stacked_format(self, tmp_path):
+        csv_path = str(tmp_path / "stacked.csv")
+        _write_stacked_csv(
+            [
+                ("2026-01-01 00:00:00", "sensor_a", 1.0),
+                ("2026-01-01 00:01:00", "sensor_a", 2.0),
+                ("2026-01-01 00:00:00", "sensor_b", 3.0),
+            ],
+            csv_path,
+        )
+        from app.application.signal.column_inspector import ColumnInspector
+
+        fmt, names = ColumnInspector().detect_csv_format(csv_path)
+        assert fmt == "stacked"
+        assert sorted(names) == ["sensor_a", "sensor_b"]
+
+    def test_stacked_signal_names_sorted(self, tmp_path):
+        csv_path = str(tmp_path / "stacked_sorted.csv")
+        _write_stacked_csv(
+            [
+                ("2026-01-01 00:00:00", "z_ch", 1.0),
+                ("2026-01-01 00:00:00", "a_ch", 2.0),
+                ("2026-01-01 00:00:00", "m_ch", 3.0),
+            ],
+            csv_path,
+        )
+        from app.application.signal.column_inspector import ColumnInspector
+
+        _, names = ColumnInspector().detect_csv_format(csv_path)
+        assert names == ["a_ch", "m_ch", "z_ch"]
+
+    def test_stacked_enumerates_all_signal_names_in_large_file(self, tmp_path):
+        """Names that appear only after the first 100 rows are still enumerated."""
+        csv_path = str(tmp_path / "large_stacked.csv")
+        # Generate 150 rows for channel_1, then 1 row for channel_late.
+        rows = [
+            (f"2026-01-01 00:{i // 60:02d}:{i % 60:02d}", "channel_1", float(i))
+            for i in range(150)
+        ] + [("2026-01-01 02:30:00", "channel_late", 999.0)]
+        _write_stacked_csv(rows, csv_path)
+
+        from app.application.signal.column_inspector import ColumnInspector
+
+        fmt, names = ColumnInspector().detect_csv_format(csv_path)
+        assert fmt == "stacked"
+        assert "channel_1" in names
+        assert "channel_late" in names
+
+
+# ── ProcessSignalRequest validation ──────────────────────────────────────────
+
+
+class TestProcessSignalRequestValidation:
+    """Verify the model validator for wide vs stacked format fields."""
+
+    def test_wide_format_requires_time_column(self):
+        from pydantic import ValidationError
+
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        with pytest.raises(ValidationError, match="time_column is required"):
+            ProcessSignalRequest(
+                csv_format="wide",
+                signal_columns=["ch_a"],
+            )
+
+    def test_wide_format_requires_signal_columns(self):
+        from pydantic import ValidationError
+
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        with pytest.raises(ValidationError, match="signal_columns is required"):
+            ProcessSignalRequest(
+                csv_format="wide",
+                time_column="ts",
+            )
+
+    def test_wide_format_valid(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(
+            csv_format="wide",
+            time_column="ts",
+            signal_columns=["ch_a", "ch_b"],
+        )
+        assert req.time_column == "ts"
+        assert req.signal_columns == ["ch_a", "ch_b"]
+
+    def test_stacked_format_no_filter_is_valid(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(csv_format="stacked")
+        assert req.stacked_channel_filter is None
+
+    def test_stacked_format_with_filter(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(
+            csv_format="stacked",
+            stacked_channel_filter=["sig_1", "sig_2"],
+        )
+        assert req.stacked_channel_filter == ["sig_1", "sig_2"]
+
+    def test_stacked_format_empty_filter_raises(self):
+        from pydantic import ValidationError
+
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        with pytest.raises(
+            ValidationError, match="stacked_channel_filter must not be an empty list"
+        ):
+            ProcessSignalRequest(
+                csv_format="stacked",
+                stacked_channel_filter=[],
+            )
+
+    def test_default_format_is_wide_when_fields_provided(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        # Omitting csv_format should default to "wide"
+        req = ProcessSignalRequest(
+            time_column="time",
+            signal_columns=["val"],
+        )
+        assert req.csv_format == "wide"
+
+
+# ── Alias column-name support ─────────────────────────────────────────────────
+
+
+class TestIsStackedFormatAliases:
+    """_is_stacked_format must recognise measurement_datetime/measurement_value."""
+
+    def test_detects_alias_columns_as_stacked(self):
+        df = _make_alias_stacked_df([("2026-01-01 00:00:00", "s1", 1.0)])
+        assert _is_stacked_format(df) is True
+
+    def test_alias_columns_mixed_with_extra_cols(self):
+        """Extra columns (equipment, unit) must not block detection."""
+        df = _make_alias_stacked_df(
+            [
+                ("2026-01-01 00:00:00", "s1", 1.0),
+                ("2026-01-01 00:01:00", "s1", 2.0),
+            ]
+        )
+        assert _is_stacked_format(df) is True
+
+    def test_only_one_alias_column_is_not_stacked(self):
+        """Partial alias match must not trigger stacked detection."""
+        df = pl.DataFrame(
+            {
+                "signal_name": ["s1"],
+                "measurement_datetime": ["2026-01-01 00:00:00"],
+                # measurement_value missing → only datetime alias present
+            }
+        )
+        assert _is_stacked_format(df) is False
+
+
+class TestReadStackedSignalFileAliases:
+    """_read_stacked_signal_file must parse alias-column DataFrames correctly."""
+
+    def test_reads_two_channels_from_alias_df(self):
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:01:00", "ch_a", 2.0),
+            ("2026-01-01 00:00:00", "ch_b", 10.0),
+            ("2026-01-01 00:01:00", "ch_b", 20.0),
+        ]
+        df = _make_alias_stacked_df(rows)
+        ts, channels = _read_stacked_signal_file(df)
+
+        assert set(channels.keys()) == {"ch_a", "ch_b"}
+        assert ts == pytest.approx([0.0, 60.0])
+        assert channels["ch_a"] == [1.0, 2.0]
+        assert channels["ch_b"] == [10.0, 20.0]
+
+    def test_timestamps_start_at_zero_with_alias_df(self):
+        rows = [
+            ("2026-04-20 06:30:00", "sig", 5.0),
+            ("2026-04-20 06:31:00", "sig", 6.0),
+        ]
+        df = _make_alias_stacked_df(rows)
+        ts, _ = _read_stacked_signal_file(df)
+        assert ts[0] == pytest.approx(0.0)
+        assert ts[1] == pytest.approx(60.0)
+
+    def test_extra_columns_ignored(self):
+        """equipment and unit columns must not appear in the channel output."""
+        rows = [("2026-01-01 00:00:00", "pressure", 0.48)]
+        df = _make_alias_stacked_df(rows)
+        _, channels = _read_stacked_signal_file(df)
+        assert list(channels.keys()) == ["pressure"]
+        assert "equipment" not in channels
+        assert "unit" not in channels
+
+    def test_channel_filter_works_with_alias_df(self):
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:00:00", "ch_b", 2.0),
+        ]
+        df = _make_alias_stacked_df(rows)
+        _, channels = _read_stacked_signal_file(df, channel_filter=["ch_a"])
+        assert list(channels.keys()) == ["ch_a"]
+
+
+class TestReadSignalFileDispatcherAliases:
+    """_read_signal_file dispatcher must route alias-column CSVs to stacked reader."""
+
+    def test_dispatches_alias_csv_to_stacked_reader(self, tmp_path):
+        csv_path = str(tmp_path / "alias_stacked.csv")
+        _write_alias_stacked_csv(
+            [
+                ("2026-01-01T00:00:00.000Z", "HeadPressureZone1", 0.48),
+                ("2026-01-01T00:00:01.000Z", "HeadPressureZone1", 0.49),
+                ("2026-01-01T00:00:00.000Z", "HeadRotation", 1.5),
+                ("2026-01-01T00:00:01.000Z", "HeadRotation", 1.6),
+            ],
+            csv_path,
+        )
+        ts, channels = _read_signal_file(csv_path)
+        assert set(channels.keys()) == {"HeadPressureZone1", "HeadRotation"}
+        assert ts[0] == pytest.approx(0.0)
+
+    def test_alias_csv_elapsed_seconds(self, tmp_path):
+        csv_path = str(tmp_path / "alias_timing.csv")
+        _write_alias_stacked_csv(
+            [
+                ("2026-04-10T05:29:21.000Z", "sig", 0.0),
+                ("2026-04-10T05:29:22.000Z", "sig", 1.0),
+                ("2026-04-10T05:29:23.000Z", "sig", 2.0),
+            ],
+            csv_path,
+        )
+        ts, _ = _read_signal_file(csv_path)
+        assert ts == pytest.approx([0.0, 1.0, 2.0])
+
+
+class TestColumnInspectorDetectFormatAliases:
+    """detect_csv_format must classify alias-column files as stacked."""
+
+    def test_detects_alias_csv_as_stacked(self, tmp_path):
+        csv_path = str(tmp_path / "alias.csv")
+        _write_alias_stacked_csv(
+            [
+                ("2026-01-01T00:00:00.000Z", "HeadPressureZone1", 0.48),
+                ("2026-01-01T00:00:01.000Z", "HeadPressureZone1", 0.49),
+                ("2026-01-01T00:00:00.000Z", "HeadRotation", 1.5),
+            ],
+            csv_path,
+        )
+        from app.application.signal.column_inspector import ColumnInspector
+
+        fmt, names = ColumnInspector().detect_csv_format(csv_path)
+        assert fmt == "stacked"
+        assert sorted(names) == ["HeadPressureZone1", "HeadRotation"]
+
+    def test_alias_csv_signal_names_sorted(self, tmp_path):
+        csv_path = str(tmp_path / "alias_sorted.csv")
+        _write_alias_stacked_csv(
+            [
+                ("2026-01-01T00:00:00.000Z", "ZChannel", 1.0),
+                ("2026-01-01T00:00:00.000Z", "AChannel", 2.0),
+            ],
+            csv_path,
+        )
+        from app.application.signal.column_inspector import ColumnInspector
+
+        _, names = ColumnInspector().detect_csv_format(csv_path)
+        assert names == ["AChannel", "ZChannel"]

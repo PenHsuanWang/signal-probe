@@ -100,10 +100,18 @@ class SignalRepository:
     async def save_column_config(
         self,
         signal_id: uuid.UUID,
-        time_column: str,
+        time_column: str | None,
         signal_columns: list[str],
     ) -> None:
-        """Persist user-selected column mapping and advance status to PENDING."""
+        """Persist user-selected column mapping and advance status to PENDING.
+
+        For wide format: *time_column* is the name of the time axis column and
+        *signal_columns* are the value channel column names.
+
+        For stacked format: *time_column* is ``None`` (the time axis is the
+        implicit ``datetime`` column) and *signal_columns* holds the optional
+        channel filter (empty list = include all channels).
+        """
         import json
 
         await self.session.execute(

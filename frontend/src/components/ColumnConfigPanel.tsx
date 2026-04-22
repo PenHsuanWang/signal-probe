@@ -1,6 +1,6 @@
 import React, { useCallback, useId } from 'react';
 import {
-  Settings2, Clock, Activity,
+  Settings2, Clock, Activity, Layers,
   ChevronRight, AlertCircle, Loader2,
 } from 'lucide-react';
 import { isNumericDtype, useColumnConfig } from '../hooks/useColumnConfig';
@@ -20,7 +20,7 @@ export interface ColumnConfigPanelProps {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-components
+// Sub-components — Wide format
 // ---------------------------------------------------------------------------
 
 interface ColumnRowProps {
@@ -160,6 +160,74 @@ function SignalColumnSelector({
 }
 
 // ---------------------------------------------------------------------------
+// Sub-component — Stacked format channel picker
+// ---------------------------------------------------------------------------
+
+interface StackedChannelPickerProps {
+  signalNames: string[];
+  selected: Set<string>;
+  labelId: string;
+  onToggle: (name: string) => void;
+  onSelectAll: () => void;
+}
+
+function StackedChannelPicker({
+  signalNames, selected, labelId, onToggle, onSelectAll,
+}: StackedChannelPickerProps) {
+  const allSelected = selected.size === signalNames.length;
+
+  return (
+    <div className="space-y-2" role="group" aria-labelledby={labelId}>
+      <div className="flex items-center justify-between">
+        <div id={labelId} className="flex items-center gap-1.5" style={{ color: 'var(--sp-text-secondary)' }}>
+          <Layers size={12} aria-hidden="true" />
+          <span className="font-semibold uppercase tracking-wide text-[10px]">Signal channels</span>
+          <span className="text-red-400" aria-hidden="true">*</span>
+        </div>
+        {!allSelected && (
+          <button
+            type="button"
+            onClick={onSelectAll}
+            className="text-[10px] font-sans text-brand-400 hover:text-brand-300 transition-colors"
+          >
+            Select all
+          </button>
+        )}
+      </div>
+      <div className="space-y-1 max-h-64 overflow-y-auto pr-1" role="list">
+        {signalNames.map((name) => {
+          const isSelected = selected.has(name);
+          const borderColor = isSelected ? 'var(--sp-brand,#3b82f6)' : 'var(--sp-border)';
+          const bg = isSelected ? 'var(--sp-surface-elevated)' : undefined;
+          return (
+            <div key={name} role="listitem">
+              <label
+                className="flex items-center gap-2 px-2.5 py-2 rounded cursor-pointer transition-colors hover:bg-zinc-800/40"
+                style={{ background: bg, border: `1px solid ${borderColor}` }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(name)}
+                  className="accent-blue-500"
+                  aria-label={name}
+                />
+                <span className="font-mono font-semibold text-xs truncate" style={{ color: 'var(--sp-text-primary)' }}>
+                  {name}
+                </span>
+              </label>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>
+        {selected.size} of {signalNames.length} channels selected
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Error Boundary
 // ---------------------------------------------------------------------------
 
@@ -198,6 +266,12 @@ class ColumnConfigErrorBoundary extends React.Component<
  * ColumnConfigPanel — lets the user pick a time axis column and one or more
  * signal channel columns before triggering the processing pipeline.
  *
+ * Supports two CSV formats:
+ * - **Wide**: each channel is its own column; user selects a time axis column
+ *   and one or more value channel columns.
+ * - **Stacked**: channels are stored as rows in `signal_name`/`signal_value`
+ *   columns; user selects which channel names to include.
+ *
  * @example
  * <ColumnConfigPanel
  *   signalId="abc-123"
@@ -212,9 +286,10 @@ export function ColumnConfigPanel({ signalId, onConfigured, onCancel }: ColumnCo
   const radioGroup  = `time-col-${uid}`;
 
   const {
-    status, columns, timeCol, sigCols,
-    fetchError, submitError, canSubmit,
-    setTimeCol, toggleSigCol, handleSubmit,
+    status, csvFormat, columns, stackedSignalNames, selectedStackedChannels,
+    timeCol, sigCols, fetchError, submitError, canSubmit,
+    setTimeCol, toggleSigCol, toggleStackedChannel, selectAllStackedChannels,
+    handleSubmit,
   } = useColumnConfig(signalId, onConfigured);
 
   if (status === 'loading') {
@@ -253,32 +328,64 @@ export function ColumnConfigPanel({ signalId, onConfigured, onCancel }: ColumnCo
     <ColumnConfigErrorBoundary>
       <section className="space-y-4 text-xs font-sans" aria-label="Configure column mapping">
         {/* Header */}
-        <div className="flex items-center gap-2" style={{ color: 'var(--sp-text-secondary)' }}>
-          <Settings2 size={14} className="text-brand-400" aria-hidden="true" />
-          <h2 className="font-semibold text-[11px] uppercase tracking-wide">
-            Configure Column Mapping
-          </h2>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2" style={{ color: 'var(--sp-text-secondary)' }}>
+            <Settings2 size={14} className="text-brand-400" aria-hidden="true" />
+            <h2 className="font-semibold text-[11px] uppercase tracking-wide">
+              Configure Column Mapping
+            </h2>
+          </div>
+          {/* Format badge */}
+          <span
+            className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${
+              csvFormat === 'stacked'
+                ? 'bg-purple-500/20 text-purple-300'
+                : 'bg-brand-500/20 text-brand-400'
+            }`}
+          >
+            {csvFormat === 'stacked' ? 'Stacked / Long format' : 'Wide format'}
+          </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TimeColumnSelector
-            columns={columns}
-            selected={timeCol}
-            radioGroupName={radioGroup}
-            labelId={timeLabelId}
-            onSelect={setTimeCol}
-          />
-          <SignalColumnSelector
-            columns={columns}
-            selectedTimeCol={timeCol}
-            sigCols={sigCols}
-            labelId={sigLabelId}
-            onToggle={toggleSigCol}
-          />
-        </div>
+        {csvFormat === 'stacked' ? (
+          /* ── Stacked format: channel name picker ── */
+          <div>
+            <p className="text-[10px] font-sans mb-3" style={{ color: 'var(--sp-text-tertiary)' }}>
+              This file uses the long/stacked format (<code className="font-mono">datetime</code>,{' '}
+              <code className="font-mono">signal_name</code>,{' '}
+              <code className="font-mono">signal_value</code> columns).
+              Select which signal channels to include in the processed output.
+            </p>
+            <StackedChannelPicker
+              signalNames={stackedSignalNames}
+              selected={selectedStackedChannels}
+              labelId={sigLabelId}
+              onToggle={toggleStackedChannel}
+              onSelectAll={selectAllStackedChannels}
+            />
+          </div>
+        ) : (
+          /* ── Wide format: time + signal column pickers ── */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <TimeColumnSelector
+              columns={columns}
+              selected={timeCol}
+              radioGroupName={radioGroup}
+              labelId={timeLabelId}
+              onSelect={setTimeCol}
+            />
+            <SignalColumnSelector
+              columns={columns}
+              selectedTimeCol={timeCol}
+              sigCols={sigCols}
+              labelId={sigLabelId}
+              onToggle={toggleSigCol}
+            />
+          </div>
+        )}
 
         {/* Inline validation hints */}
-        {timeCol && sigCols.has(timeCol) && (
+        {csvFormat === 'wide' && timeCol && sigCols.has(timeCol) && (
           <div role="alert" className="flex items-center gap-1.5 text-yellow-400 text-[10px]">
             <AlertCircle size={11} aria-hidden="true" />
             The time column cannot also be a signal channel. Deselect it from signals.

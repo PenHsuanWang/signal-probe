@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.signal.enums import ProcessingStatus
 
@@ -83,21 +83,48 @@ class ColumnDescriptor(BaseModel):
 class RawColumnsResponse(BaseModel):
     signal_id: uuid.UUID
     columns: list[ColumnDescriptor]
+    csv_format: Literal["wide", "stacked"] = "wide"
+    # Detected CSV format: 'wide' (one column per channel) or 'stacked' (long format).
+    stacked_signal_names: list[str] = Field(default_factory=list)
+    # Unique signal names found in the signal_name column (stacked format only).
 
 
 # ── Column configuration / process ────────────────────────────────────────────
 
 
 class ProcessSignalRequest(BaseModel):
-    time_column: str = Field(..., min_length=1, max_length=255)
-    signal_columns: list[str] = Field(..., min_length=1)
+    csv_format: Literal["wide", "stacked"] = "wide"
+    # Format of the raw CSV: 'wide' (one column per channel) or 'stacked' (long format).
 
-    @field_validator("signal_columns")
-    @classmethod
-    def _no_empty_names(cls, v: list[str]) -> list[str]:
-        if any(not s.strip() for s in v):
-            raise ValueError("signal_columns must not contain empty strings")
-        return v
+    # Wide-format fields (required when csv_format == "wide")
+    time_column: str | None = Field(None, min_length=1, max_length=255)
+    signal_columns: list[str] | None = None
+
+    # Stacked-format field (optional — None means include all available channels)
+    stacked_channel_filter: list[str] | None = None
+    # Subset of signal names to include from a stacked CSV (None = all channels).
+
+    @model_validator(mode="after")
+    def _validate_format_fields(self) -> "ProcessSignalRequest":
+        if self.csv_format == "wide":
+            if not self.time_column:
+                raise ValueError("time_column is required for wide format")
+            if not self.signal_columns:
+                raise ValueError("signal_columns is required for wide format")
+            if any(not s.strip() for s in self.signal_columns):
+                raise ValueError("signal_columns must not contain empty strings")
+        elif self.csv_format == "stacked":
+            if self.stacked_channel_filter is not None:
+                if not self.stacked_channel_filter:
+                    raise ValueError(
+                        "stacked_channel_filter must not be an empty list "
+                        "(use null/omit to include all channels)"
+                    )
+                if any(not s.strip() for s in self.stacked_channel_filter):
+                    raise ValueError(
+                        "stacked_channel_filter must not contain empty strings"
+                    )
+        return self
 
 
 # ── Macro view ─────────────────────────────────────────────────────────────────
