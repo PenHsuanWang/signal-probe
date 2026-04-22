@@ -26,6 +26,7 @@ from app.application.signal.pipeline import (
     _read_signal_file,
     _read_stacked_signal_file,
     _read_wide_signal_file,
+    _read_with_config,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:02:00", "signal_2", 30.0),
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
 
         assert len(ts) == 3
         assert ts[0] == pytest.approx(0.0)
@@ -163,7 +164,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:00:00", "m_channel", 5.0),
         ]
         df = _make_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df)
+        _, channels, _ = _read_stacked_signal_file(df)
         assert list(channels.keys()) == ["a_channel", "m_channel", "z_channel"]
 
     def test_outer_join_alignment_fills_none_for_missing_timestamps(self):
@@ -177,7 +178,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:02:00", "ch_b", 30.0),
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
 
         assert len(ts) == 3
         assert channels["ch_a"] == [1.0, 2.0, 3.0]
@@ -195,7 +196,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:02:00", "ch_b", 30.0),  # extra
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
 
         assert len(ts) == 3
         assert channels["ch_a"][-1] is None  # ch_a missing at t3
@@ -207,7 +208,7 @@ class TestReadStackedSignalFile:
             ("2026-04-20 06:31:00", "sig", 2.0),
         ]
         df = _make_stacked_df(rows)
-        ts, _ = _read_stacked_signal_file(df)
+        ts, _, _ = _read_stacked_signal_file(df)
         assert ts[0] == pytest.approx(0.0)
         assert ts[1] == pytest.approx(60.0)
 
@@ -219,7 +220,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:01:00", "s1", 2.0),
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
         assert len(ts) == 2
         assert channels["s1"][0] == pytest.approx(1.0)
 
@@ -229,7 +230,7 @@ class TestReadStackedSignalFile:
             ("2026-01-01 00:01:00", "only_signal", 6.0),
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
         assert list(channels.keys()) == ["only_signal"]
         assert ts == pytest.approx([0.0, 60.0])
 
@@ -244,7 +245,7 @@ class TestReadStackedSignalFile:
                 "Signal_Value": pl.Series([1.0], dtype=pl.Float64),
             }
         )
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
         assert len(ts) == 1
         assert "s1" in channels
 
@@ -259,6 +260,16 @@ class TestReadStackedSignalFile:
         with pytest.raises(ValueError, match="no valid rows"):
             _read_stacked_signal_file(df)
 
+    def test_t0_epoch_s_is_unix_epoch_of_first_timestamp(self):
+        """t0_epoch_s must equal the Unix epoch (seconds) of the earliest row."""
+        rows = [
+            ("2026-04-20 00:00:00", "sig", 1.0),
+            ("2026-04-20 00:01:00", "sig", 2.0),
+        ]
+        df = _make_stacked_df(rows)
+        _, _, t0_epoch_s = _read_stacked_signal_file(df)
+        assert t0_epoch_s == pytest.approx(1776643200.0)
+
     def test_five_channels_full_alignment(self):
         """Simulate the real signal_data.csv structure: 5 channels, same timestamps."""
         n = 10
@@ -268,7 +279,7 @@ class TestReadStackedSignalFile:
                 ts_str = f"2026-04-20 00:{i:02d}:00"
                 rows.append((ts_str, f"signal_{ch}", float(ch * i)))
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
 
         assert len(ts) == n
         assert len(channels) == 5
@@ -289,20 +300,20 @@ class TestReadWideSignalFile:
                 "ch_b": [4.0, 5.0, 6.0],
             }
         )
-        ts, channels = _read_wide_signal_file(df)
+        ts, channels, _ = _read_wide_signal_file(df)
         assert ts == pytest.approx([0.0, 1.0, 2.0])
         assert channels["ch_a"] == [1.0, 2.0, 3.0]
         assert channels["ch_b"] == [4.0, 5.0, 6.0]
 
     def test_single_value_column_uses_row_index(self):
         df = pl.DataFrame({"value": [10.0, 20.0, 30.0]})
-        ts, channels = _read_wide_signal_file(df)
+        ts, channels, _ = _read_wide_signal_file(df)
         assert ts == pytest.approx([0.0, 1.0, 2.0])
         assert channels["value"] == [10.0, 20.0, 30.0]
 
     def test_elapsed_time_starts_at_zero(self):
         df = pl.DataFrame({"time": [100.0, 110.0, 120.0], "val": [1.0, 2.0, 3.0]})
-        ts, _ = _read_wide_signal_file(df)
+        ts, _, _ = _read_wide_signal_file(df)
         assert ts[0] == pytest.approx(0.0)
         assert ts[1] == pytest.approx(10.0)
 
@@ -310,6 +321,32 @@ class TestReadWideSignalFile:
         df = pl.DataFrame({"a": ["x", "y"], "b": ["p", "q"]})
         with pytest.raises(ValueError, match="no usable numeric columns"):
             _read_wide_signal_file(df)
+
+    def test_temporal_time_column_elapsed_seconds(self):
+        """Wide file with a datetime first column: elapsed in seconds, not μs."""
+        df = pl.DataFrame(
+            {
+                "ts": pl.Series(
+                    [
+                        "2026-04-20 00:00:00",
+                        "2026-04-20 00:01:00",
+                        "2026-04-20 00:02:00",
+                    ]
+                ).str.to_datetime("%Y-%m-%d %H:%M:%S"),
+                "val": [1.0, 2.0, 3.0],
+            }
+        )
+        ts, channels, t0_epoch_s = _read_wide_signal_file(df)
+        assert ts == pytest.approx([0.0, 60.0, 120.0])
+        assert channels["val"] == [1.0, 2.0, 3.0]
+        assert t0_epoch_s is not None
+        assert t0_epoch_s == pytest.approx(1776643200.0)
+
+    def test_temporal_time_column_returns_t0_epoch_s(self):
+        """t0_epoch_s must be None for numeric time columns."""
+        df = pl.DataFrame({"time": [0.0, 1.0], "val": [10.0, 20.0]})
+        _, _, t0_epoch_s = _read_wide_signal_file(df)
+        assert t0_epoch_s is None
 
 
 # ── _read_signal_file dispatcher ─────────────────────────────────────────────
@@ -327,7 +364,7 @@ class TestReadSignalFileDispatcher:
             ],
             csv_path,
         )
-        ts, channels = _read_signal_file(csv_path)
+        ts, channels, _ = _read_signal_file(csv_path)
         assert set(channels.keys()) == {"sig_a", "sig_b"}
         assert ts[0] == pytest.approx(0.0)
 
@@ -338,7 +375,7 @@ class TestReadSignalFileDispatcher:
             header=["time", "channel_a", "channel_b"],
             path=csv_path,
         )
-        ts, channels = _read_signal_file(csv_path)
+        ts, channels, _ = _read_signal_file(csv_path)
         assert set(channels.keys()) == {"channel_a", "channel_b"}
         assert ts[0] == pytest.approx(0.0)
 
@@ -352,7 +389,7 @@ class TestReadSignalFileDispatcher:
             ],
             csv_path,
         )
-        ts, _ = _read_signal_file(csv_path)
+        ts, _, _ = _read_signal_file(csv_path)
         assert ts == pytest.approx([0.0, 60.0, 120.0])
 
     def test_real_signal_data_csv(self):
@@ -365,7 +402,7 @@ class TestReadSignalFileDispatcher:
         if not os.path.exists(csv_path):
             pytest.skip("data/signal_data.csv not found; skipping integration test")
 
-        ts, channels = _read_signal_file(csv_path)
+        ts, channels, _ = _read_signal_file(csv_path)
 
         assert len(channels) == 5
         assert set(channels.keys()) == {
@@ -384,6 +421,64 @@ class TestReadSignalFileDispatcher:
         for ch_name, ch_vals in channels.items():
             none_count = sum(1 for v in ch_vals if v is None)
             assert none_count == 0, f"{ch_name} has unexpected None gaps"
+
+
+# ── _read_with_config ─────────────────────────────────────────────────────────
+
+
+class TestReadWithConfig:
+    """Verify explicit column-config reader with numeric and temporal time columns."""
+
+    def test_numeric_time_column(self, tmp_path):
+        csv_path = str(tmp_path / "wide_numeric.csv")
+        _write_wide_csv(
+            [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)],
+            header=["ts", "val"],
+            path=csv_path,
+        )
+        ts, channels, t0_epoch_s = _read_with_config(csv_path, "ts", ["val"])
+        assert ts == pytest.approx([0.0, 1.0, 2.0])
+        assert channels["val"] == [1.0, 2.0, 3.0]
+        assert t0_epoch_s is None
+
+    def test_temporal_time_column_elapsed_seconds(self, tmp_path):
+        """Datetime time column must produce elapsed seconds, not μs."""
+        csv_path = str(tmp_path / "wide_datetime.csv")
+        with open(csv_path, "w") as f:
+            f.write("timestamp,sensor_a\n")
+            f.write("2026-04-20 00:00:00,10.0\n")
+            f.write("2026-04-20 00:01:00,20.0\n")
+            f.write("2026-04-20 00:02:00,30.0\n")
+        ts, channels, t0_epoch_s = _read_with_config(
+            csv_path, "timestamp", ["sensor_a"]
+        )
+        assert ts == pytest.approx([0.0, 60.0, 120.0])
+        assert channels["sensor_a"] == [10.0, 20.0, 30.0]
+        assert t0_epoch_s is not None
+        assert t0_epoch_s == pytest.approx(1776643200.0)
+
+    def test_temporal_column_t0_epoch_s_consistent_with_iso(self, tmp_path):
+        """t0_epoch_s must equal the Unix epoch of the first timestamp."""
+        import datetime
+
+        csv_path = str(tmp_path / "wide_datetime_epoch.csv")
+        with open(csv_path, "w") as f:
+            f.write("ts,val\n")
+            f.write("2000-01-01 00:00:00,1.0\n")
+            f.write("2000-01-01 00:00:01,2.0\n")
+        _, _, t0_epoch_s = _read_with_config(csv_path, "ts", ["val"])
+        assert t0_epoch_s is not None
+        # 2000-01-01 00:00:00 UTC in epoch seconds
+        expected = datetime.datetime(
+            2000, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        ).timestamp()
+        assert t0_epoch_s == pytest.approx(expected, rel=1e-3)
+
+    def test_missing_column_raises(self, tmp_path):
+        csv_path = str(tmp_path / "wide.csv")
+        _write_wide_csv([(0.0, 1.0)], header=["ts", "val"], path=csv_path)
+        with pytest.raises(ValueError, match="not found in file"):
+            _read_with_config(csv_path, "missing_col", ["val"])
 
 
 # ── Classifier null-safety ────────────────────────────────────────────────────
@@ -425,7 +520,7 @@ class TestReadStackedChannelFilter:
             ("2026-01-01 00:01:00", "ch_b", 20.0),
         ]
         df = _make_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df, channel_filter=["ch_a"])
+        _, channels, _ = _read_stacked_signal_file(df, channel_filter=["ch_a"])
         assert list(channels.keys()) == ["ch_a"]
         assert channels["ch_a"] == [1.0, 2.0]
 
@@ -436,7 +531,9 @@ class TestReadStackedChannelFilter:
             ("2026-01-01 00:00:00", "gamma", 3.0),
         ]
         df = _make_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df, channel_filter=["alpha", "gamma"])
+        _, channels, _ = _read_stacked_signal_file(
+            df, channel_filter=["alpha", "gamma"]
+        )
         assert set(channels.keys()) == {"alpha", "gamma"}
         assert "beta" not in channels
 
@@ -446,7 +543,7 @@ class TestReadStackedChannelFilter:
             ("2026-01-01 00:00:00", "y", 2.0),
         ]
         df = _make_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df, channel_filter=None)
+        _, channels, _ = _read_stacked_signal_file(df, channel_filter=None)
         assert set(channels.keys()) == {"x", "y"}
 
     def test_filter_with_unknown_names_raises(self):
@@ -466,7 +563,7 @@ class TestReadStackedChannelFilter:
             ("2026-01-01 00:02:00", "b", 30.0),
         ]
         df = _make_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df, channel_filter=["a"])
+        ts, channels, _ = _read_stacked_signal_file(df, channel_filter=["a"])
         assert len(ts) == 3
         assert ts == pytest.approx([0.0, 60.0, 120.0])
         assert channels["a"] == [1.0, 2.0, 3.0]
@@ -661,7 +758,7 @@ class TestReadStackedSignalFileAliases:
             ("2026-01-01 00:01:00", "ch_b", 20.0),
         ]
         df = _make_alias_stacked_df(rows)
-        ts, channels = _read_stacked_signal_file(df)
+        ts, channels, _ = _read_stacked_signal_file(df)
 
         assert set(channels.keys()) == {"ch_a", "ch_b"}
         assert ts == pytest.approx([0.0, 60.0])
@@ -674,7 +771,7 @@ class TestReadStackedSignalFileAliases:
             ("2026-04-20 06:31:00", "sig", 6.0),
         ]
         df = _make_alias_stacked_df(rows)
-        ts, _ = _read_stacked_signal_file(df)
+        ts, _, _ = _read_stacked_signal_file(df)
         assert ts[0] == pytest.approx(0.0)
         assert ts[1] == pytest.approx(60.0)
 
@@ -682,7 +779,7 @@ class TestReadStackedSignalFileAliases:
         """equipment and unit columns must not appear in the channel output."""
         rows = [("2026-01-01 00:00:00", "pressure", 0.48)]
         df = _make_alias_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df)
+        _, channels, _ = _read_stacked_signal_file(df)
         assert list(channels.keys()) == ["pressure"]
         assert "equipment" not in channels
         assert "unit" not in channels
@@ -693,7 +790,7 @@ class TestReadStackedSignalFileAliases:
             ("2026-01-01 00:00:00", "ch_b", 2.0),
         ]
         df = _make_alias_stacked_df(rows)
-        _, channels = _read_stacked_signal_file(df, channel_filter=["ch_a"])
+        _, channels, _ = _read_stacked_signal_file(df, channel_filter=["ch_a"])
         assert list(channels.keys()) == ["ch_a"]
 
 
@@ -711,7 +808,7 @@ class TestReadSignalFileDispatcherAliases:
             ],
             csv_path,
         )
-        ts, channels = _read_signal_file(csv_path)
+        ts, channels, _ = _read_signal_file(csv_path)
         assert set(channels.keys()) == {"HeadPressureZone1", "HeadRotation"}
         assert ts[0] == pytest.approx(0.0)
 
@@ -725,7 +822,7 @@ class TestReadSignalFileDispatcherAliases:
             ],
             csv_path,
         )
-        ts, _ = _read_signal_file(csv_path)
+        ts, _, _ = _read_signal_file(csv_path)
         assert ts == pytest.approx([0.0, 1.0, 2.0])
 
 

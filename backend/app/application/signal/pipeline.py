@@ -92,8 +92,8 @@ def _load_raw_dataframe(raw_path: str) -> pl.DataFrame:
 def _read_stacked_signal_file(
     df: pl.DataFrame,
     channel_filter: list[str] | None = None,
-) -> tuple[list[float], dict[str, list[float | None]]]:
-    """Parse a long/stacked CSV into (timestamps_s, channels).
+) -> tuple[list[float], dict[str, list[float | None]], float]:
+    """Parse a long/stacked CSV into (timestamps_s, channels, t0_epoch_s).
 
     Steps
     -----
@@ -103,8 +103,9 @@ def _read_stacked_signal_file(
        missing positions become ``null``).
     4. Sort by ``datetime`` and compute elapsed seconds from the first timestamp.
     5. Apply *channel_filter* if provided (keep only the requested channels).
-    6. Return ``(timestamps_s, {signal_name: [float | None, ...]})`` where
-       ``None`` marks timestamps absent for a given channel.
+    6. Return ``(timestamps_s, {signal_name: [float | None, ...]}, t0_epoch_s)``
+       where ``None`` marks timestamps absent for a given channel and
+       ``t0_epoch_s`` is the Unix epoch of the first timestamp (seconds).
 
     Args:
         df: Raw DataFrame loaded from the stacked CSV.
@@ -116,6 +117,7 @@ def _read_stacked_signal_file(
         timestamps_s: Elapsed-seconds list starting at 0.0.
         channels: Ordered dict ``{signal_name: [float | None, ...]}``,
                   all lists parallel to ``timestamps_s``.
+        t0_epoch_s: Unix epoch seconds of the first (earliest) timestamp.
 
     Raises:
         ValueError: If the DataFrame is empty after cleaning or has no channels.
@@ -162,10 +164,15 @@ def _read_stacked_signal_file(
     elapsed = (aligned["datetime"] - t0).dt.total_microseconds().cast(pl.Float64)
     timestamps_s: list[float] = (elapsed / 1_000_000.0).to_list()
 
+    # Extract the Unix epoch of the first timestamp so callers can reconstruct
+    # absolute datetime values for axis display.
+    t0_epoch_us: int = aligned["datetime"].cast(pl.Int64).min()  # type: ignore[assignment]
+    t0_epoch_s: float = t0_epoch_us / 1_000_000.0
+
     channels: dict[str, list[float | None]] = {
         col: aligned[col].to_list() for col in ch_cols
     }
-    return timestamps_s, channels
+    return timestamps_s, channels, t0_epoch_s
 
 
 # ── Wide-format reader (existing logic, extracted) ────────────────────────────
@@ -173,11 +180,17 @@ def _read_stacked_signal_file(
 
 def _read_wide_signal_file(
     df: pl.DataFrame,
-) -> tuple[list[float], dict[str, list[float]]]:
-    """Parse a wide-format CSV/Parquet into (timestamps_s, channels).
+) -> tuple[list[float], dict[str, list[float]], float | None]:
+    """Parse a wide-format CSV/Parquet into (timestamps_s, channels, t0_epoch_s).
 
     The first numeric/temporal column is treated as the time axis; all
     remaining numeric columns are value channels.
+
+    Returns:
+        timestamps_s: Elapsed-seconds list (first point = 0.0).
+        channels: ``{channel_name: [float, ...]}`` parallel to ``timestamps_s``.
+        t0_epoch_s: Unix epoch seconds of the first timestamp when the time
+            column is temporal; ``None`` for purely numeric time columns.
     """
     numeric_cols = [
         c for c, t in zip(df.columns, df.dtypes) if t.is_numeric() or t.is_temporal()
@@ -198,6 +211,32 @@ def _read_wide_signal_file(
         # First column is the time axis; remaining are value channels
         time_col = numeric_cols[0]
         ch_cols = numeric_cols[1:]
+
+    if df.is_empty():
+        raise ValueError("File contains no valid numeric data points after cleaning.")
+
+    time_dtype = df[time_col].dtype if time_col in df.columns else None
+    if time_dtype is not None and time_dtype.is_temporal():
+        # Temporal time column: cast signal channels to Float64, keep time as-is
+        ch_cast = [pl.col(c).cast(pl.Float64) for c in ch_cols]
+        df = df.select([time_col, *ch_cols]).with_columns(ch_cast).drop_nulls()
+
+        if df.is_empty():
+            raise ValueError(
+                "File contains no valid numeric data points after cleaning."
+            )
+
+        # Convert temporal column to elapsed seconds; record epoch of t0
+        epoch_us_series = df[time_col].cast(pl.Int64)
+        t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
+        timestamps_s: list[float] = [
+            (t - t0_epoch_us) / 1_000_000.0 for t in epoch_us_series.to_list()
+        ]
+        t0_epoch_s: float | None = t0_epoch_us / 1_000_000.0
+        channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
+        return timestamps_s, channels, t0_epoch_s
+    else:
+        # Numeric time column: cast everything to Float64
         cast_exprs = [pl.col(time_col).cast(pl.Float64).alias(time_col)] + [
             pl.col(c).cast(pl.Float64) for c in ch_cols
         ]
@@ -210,15 +249,17 @@ def _read_wide_signal_file(
     t0 = ts[0]
     ts = [t - t0 for t in ts]
 
-    channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
-    return ts, channels
+    channels = {c: df[c].to_list() for c in ch_cols}
+    return ts, channels, None
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
 
 
-def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list]]:
-    """Read a CSV or Parquet file and return (timestamps_s, channels).
+def _read_signal_file(
+    raw_path: str,
+) -> tuple[list[float], dict[str, list], float | None]:
+    """Read a CSV or Parquet file and return (timestamps_s, channels, t0_epoch_s).
 
     Automatically detects whether the file is in long/stacked format
     (``datetime``, ``signal_name``, ``signal_value`` columns) or the legacy
@@ -229,6 +270,8 @@ def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list]]:
         channels: ``{channel_name: [float | None, ...]}`` — lists are parallel
                   to ``timestamps_s``; ``None`` entries indicate missing data
                   after time-alignment (stacked format only).
+        t0_epoch_s: Unix epoch seconds of the first timestamp when the time
+            column is temporal; ``None`` for purely numeric time columns.
     """
     df = _load_raw_dataframe(raw_path)
     if _is_stacked_format(df):
@@ -241,12 +284,17 @@ def _read_with_config(
     raw_path: str,
     time_column: str,
     signal_columns: list[str],
-) -> tuple[list[float], dict[str, list[float]]]:
+) -> tuple[list[float], dict[str, list[float]], float | None]:
     """Read a raw file using an explicit user-supplied column mapping (EPIC-FLX).
 
     Bypasses all auto-detection heuristics.  The caller is responsible for
     validating that *time_column* and *signal_columns* exist in the file before
     invoking this function (validated in :meth:`SignalService.process_signal`).
+
+    Temporal time columns (e.g. ISO datetime strings parsed by Polars) are
+    handled correctly: elapsed seconds are computed from the first timestamp
+    and the Unix epoch of that first timestamp is returned as ``t0_epoch_s``
+    so that callers can reconstruct absolute datetime values for axis display.
 
     Args:
         raw_path: Absolute path to the raw uploaded file.
@@ -256,6 +304,8 @@ def _read_with_config(
     Returns:
         timestamps_s: Elapsed-seconds list starting at 0.0.
         channels: ``{channel_name: [float, ...]}`` parallel to ``timestamps_s``.
+        t0_epoch_s: Unix epoch seconds of the first timestamp when the time
+            column is temporal; ``None`` for purely numeric time columns.
 
     Raises:
         ValueError: If any column is missing or the data cannot be cast to float.
@@ -266,19 +316,43 @@ def _read_with_config(
     if missing:
         raise ValueError(f"Columns not found in file: {missing}")
 
-    all_cols = [time_column, *signal_columns]
-    cast_exprs = [pl.col(c).cast(pl.Float64) for c in all_cols]
-    df = df.select(cast_exprs).drop_nulls()
+    if df[time_column].dtype.is_temporal():
+        # Temporal time column: cast only signal columns to Float64
+        ch_cast = [pl.col(c).cast(pl.Float64) for c in signal_columns]
+        df = (
+            df.select([time_column, *signal_columns]).with_columns(ch_cast).drop_nulls()
+        )
 
-    if df.is_empty():
-        raise ValueError("File contains no valid numeric data points after cleaning.")
+        if df.is_empty():
+            raise ValueError(
+                "File contains no valid numeric data points after cleaning."
+            )
 
-    ts: list[float] = df[time_column].to_list()
-    t0 = ts[0]
-    timestamps_s = [t - t0 for t in ts]
+        # Convert temporal column to elapsed seconds; record epoch of t0
+        epoch_us_series = df[time_column].cast(pl.Int64)
+        t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
+        timestamps_s: list[float] = [
+            (t - t0_epoch_us) / 1_000_000.0 for t in epoch_us_series.to_list()
+        ]
+        t0_epoch_s: float | None = t0_epoch_us / 1_000_000.0
+    else:
+        # Numeric time column: cast everything to Float64
+        all_cols = [time_column, *signal_columns]
+        cast_exprs = [pl.col(c).cast(pl.Float64) for c in all_cols]
+        df = df.select(cast_exprs).drop_nulls()
+
+        if df.is_empty():
+            raise ValueError(
+                "File contains no valid numeric data points after cleaning."
+            )
+
+        ts: list[float] = df[time_column].to_list()
+        t0 = ts[0]
+        timestamps_s = [t - t0 for t in ts]
+        t0_epoch_s = None
 
     channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_columns}
-    return timestamps_s, channels
+    return timestamps_s, channels, t0_epoch_s
 
 
 async def run_pipeline(
@@ -311,15 +385,15 @@ async def run_pipeline(
         try:
             if csv_format == "stacked":
                 df = _load_raw_dataframe(raw_file_path)
-                timestamps, channels = _read_stacked_signal_file(
+                timestamps, channels, t0_epoch_s = _read_stacked_signal_file(
                     df, stacked_channel_filter
                 )
             elif time_column and signal_columns:
-                timestamps, channels = _read_with_config(
+                timestamps, channels, t0_epoch_s = _read_with_config(
                     raw_file_path, time_column, signal_columns
                 )
             else:
-                timestamps, channels = _read_signal_file(raw_file_path)
+                timestamps, channels, t0_epoch_s = _read_signal_file(raw_file_path)
             channel_names = list(channels.keys())
 
             # Classify + segment on the primary (first) channel
@@ -327,8 +401,12 @@ async def run_pipeline(
             primary_states = classifier.classify(primary_values)
             raw_runs = segmenter.segment(timestamps, primary_values, primary_states)
 
-            # Build processed DataFrame with per-channel value + state columns
+            # Build processed DataFrame with per-channel value + state columns.
+            # When the time column is temporal, store t0_epoch_s as a constant
+            # column so that consumers can reconstruct absolute datetime labels.
             data: dict[str, list] = {"timestamp_s": timestamps}
+            if t0_epoch_s is not None:
+                data["t0_epoch_s"] = [t0_epoch_s] * len(timestamps)
             for ch_name, ch_vals in channels.items():
                 data[ch_name] = ch_vals
                 if ch_name == channel_names[0]:

@@ -148,9 +148,13 @@ class ChannelMacroData(BaseModel):
 
 class MacroViewResponse(BaseModel):
     signal_id: uuid.UUID
-    x: list[float]  # shared timestamp axis (all original data points)
+    x: list[float]  # shared timestamp axis (elapsed seconds from first point)
     channels: list[ChannelMacroData]
     runs: list[RunBound]
+    t0_epoch_s: float | None = None
+    # Unix epoch of the first timestamp (seconds).  Set when the time column
+    # is temporal; None for purely numeric time axes.  Allows the frontend to
+    # reconstruct absolute datetime labels as: datetime(t0_epoch_s + x[i]).
 
 
 # ── Run chunk ──────────────────────────────────────────────────────────────────

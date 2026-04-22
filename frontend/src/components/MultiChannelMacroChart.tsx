@@ -24,10 +24,25 @@ interface Props {
  * a single x-axis. Hovering over any panel draws a spike line across all
  * panels, and the unified tooltip shows every channel's value at that
  * timestamp. A rangeslider at the bottom drives the run-chunk brush event.
+ *
+ * When ``macro.t0_epoch_s`` is set (temporal time column), the shared x-axis
+ * values are converted to ISO date strings so that Plotly renders actual
+ * calendar dates and times.  Otherwise elapsed seconds are shown.
  */
 export default function MultiChannelMacroChart({ macro, visibleChannels, theme, onRelayout }: Props) {
   const channels = macro.channels.filter((ch) => visibleChannels.has(ch.channel_name));
   const N = channels.length;
+
+  const hasDateAxis = macro.t0_epoch_s != null;
+
+  // Helper: convert elapsed seconds to ISO string when datetime axis is active.
+  const toXValue = (s: number): number | string =>
+    hasDateAxis
+      ? new Date((macro.t0_epoch_s! + s) * 1000).toISOString()
+      : s;
+
+  // Convert elapsed-seconds x-axis to ISO date strings when a real epoch is known.
+  const xValues = macro.x.map(toXValue);
 
   const GAP = 0.03;
   const panelH = N > 0 ? (1 - GAP * (N - 1)) / N : 1;
@@ -39,11 +54,11 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
 
   const traces: Plotly.Data[] = channels.flatMap((ch, i) => {
     const yaxisKey = i === 0 ? 'y' : `y${i + 1}`;
-    const oocX = macro.x.filter((_, j) => ch.states[j] === 'OOC');
+    const oocX = xValues.filter((_, j) => ch.states[j] === 'OOC');
     const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
     return [
       {
-        x: macro.x, y: ch.y, type: 'scattergl', mode: 'lines',
+        x: xValues, y: ch.y, type: 'scattergl', mode: 'lines',
         name: ch.channel_name, xaxis: 'x', yaxis: yaxisKey,
         line: { color: SERIES_COLOR, width: 1.5 },
         hovertemplate: `%{y:.4g}<extra>${ch.channel_name}</extra>`,
@@ -69,7 +84,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
         type: 'rect' as const,
         xref: 'x' as const,
         yref: (i === 0 ? 'y domain' : `y${i + 1} domain`) as Plotly.Shape['yref'],
-        x0: r.start_x, x1: r.end_x,
+        x0: toXValue(r.start_x), x1: toXValue(r.end_x),
         y0: 0, y1: 1,
         fillcolor: r.ooc_count > 0
           ? 'rgba(214,39,40,0.08)'
@@ -129,7 +144,13 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
         showgrid: true,
         griddash: 'dash',
         tickangle: -45,
-        title: { text: 'Time (s)', font: { size: 12, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor } },
+        // Use Plotly's 'date' axis type when absolute datetime values are provided;
+        // otherwise fall back to the default linear axis for elapsed seconds.
+        ...(hasDateAxis ? { type: 'date' } : {}),
+        title: {
+          text: hasDateAxis ? 'Date / Time' : 'Elapsed (s)',
+          font: { size: 12, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+        },
         showspikes: true,
         spikemode: 'across',
         spikethickness: 1,
@@ -169,7 +190,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
 
     return l as Partial<Plotly.Layout>;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelNamesKey, macro.runs, macro.channels, theme]);
+  }, [channelNamesKey, macro.runs, macro.channels, macro.t0_epoch_s, theme]);
 
   const height = Math.max(220, N * 140 + 80);
 

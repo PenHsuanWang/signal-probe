@@ -75,6 +75,12 @@ export interface MacroViewResponse {
   x: number[];
   channels: ChannelMacroData[];
   runs: RunBound[];
+  /**
+   * Unix epoch seconds of the first timestamp.
+   * Present when the time column is temporal; null for numeric time axes.
+   * Reconstruct absolute datetime for index i as: new Date((t0_epoch_s + x[i]) * 1000)
+   */
+  t0_epoch_s: number | null;
 }
 
 export interface ChannelChunkData {
