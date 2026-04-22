@@ -26,7 +26,7 @@ export default function FileUploader({ onUploadComplete }: FileUploaderProps) {
       setSuccess(null);
       try {
         const signal = await uploadSignal(file);
-        setSuccess(`"${file.name}" uploaded — processing started`);
+        setSuccess(`"${file.name}" uploaded — select columns to start processing`);
         onUploadComplete(signal);
       } catch (err: unknown) {
         const axiosDetail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;

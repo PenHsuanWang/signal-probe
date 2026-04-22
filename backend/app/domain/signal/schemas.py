@@ -1,6 +1,7 @@
 import json
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,6 +19,8 @@ class SignalMetadataResponse(BaseModel):
     ooc_count: int
     error_message: str | None
     channel_names: list[str] = Field(default_factory=list)
+    time_column: str | None = None
+    signal_columns: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -41,9 +44,60 @@ class SignalMetadataResponse(BaseModel):
             return v
         return []
 
+    @field_validator("signal_columns", mode="before")
+    @classmethod
+    def _coerce_signal_columns(cls, v: object) -> list[str] | None:
+        """Accept NULL, JSON text, or an already-decoded list."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                decoded = json.loads(v)
+                if isinstance(decoded, list):
+                    return decoded
+            except Exception:
+                pass
+            return None
+        if isinstance(v, list):
+            return v
+        return None
+
 
 class SignalRenameRequest(BaseModel):
     original_filename: str = Field(..., min_length=1, max_length=500)
+
+
+# ── Column inspection ──────────────────────────────────────────────────────────
+
+
+class ColumnDescriptor(BaseModel):
+    """Lightweight descriptor for a single column in the raw uploaded file."""
+
+    name: str
+    dtype: Literal["temporal", "numeric", "string", "boolean"]
+    sample_values: list[str] = Field(default_factory=list)  # up to 3 non-null values
+    null_count: int = 0
+    is_candidate_time: bool = False
+
+
+class RawColumnsResponse(BaseModel):
+    signal_id: uuid.UUID
+    columns: list[ColumnDescriptor]
+
+
+# ── Column configuration / process ────────────────────────────────────────────
+
+
+class ProcessSignalRequest(BaseModel):
+    time_column: str = Field(..., min_length=1, max_length=255)
+    signal_columns: list[str] = Field(..., min_length=1)
+
+    @field_validator("signal_columns")
+    @classmethod
+    def _no_empty_names(cls, v: list[str]) -> list[str]:
+        if any(not s.strip() for s in v):
+            raise ValueError("signal_columns must not contain empty strings")
+        return v
 
 
 # ── Macro view ─────────────────────────────────────────────────────────────────

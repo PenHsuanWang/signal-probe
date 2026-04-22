@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plot } from '../lib/plot';
 import {
-  Activity, UploadCloud, CheckCircle, Clock, XCircle,
-  RefreshCw, Layers,
+  Activity, UploadCloud,
+  Layers,
 } from 'lucide-react';
 import FileUploader from '../components/FileUploader';
 import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
+import StatusBadge from '../components/StatusBadge';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
@@ -17,35 +18,12 @@ import type {
   MacroViewResponse,
   RunBound,
   RunChunkResponse,
-  SignalMetadata,
 } from '../types/signal';
 
 // ── Channel color palette — see chartTheme.ts ────────────────────────────────
 // (imported as scientificColor)
 
 // ── Shared Plotly layout base — see buildChartTheme() in lib/chartTheme.ts
-
-// ── Status badge ─────────────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
-  const cfgMap = {
-    PENDING:    { color: 'text-zinc-400', label: 'Pending'    },
-    PROCESSING: { color: 'text-blue-400', label: 'Processing' },
-    COMPLETED:  { color: 'text-green-400', label: 'Completed' },
-    FAILED:     { color: 'text-red-400',  label: 'Failed'    },
-  };
-  const cfg = cfgMap[status];
-  const icons = {
-    PENDING:    <Clock size={12} />,
-    PROCESSING: <RefreshCw size={12} className="animate-spin" />,
-    COMPLETED:  <CheckCircle size={12} />,
-    FAILED:     <XCircle size={12} />,
-  };
-  return (
-    <span className={`flex items-center space-x-1 text-xs font-mono ${cfg.color}`}>
-      {icons[status]}<span>{cfg.label}</span>
-    </span>
-  );
-}
 
 // ── Single run micro-chart ────────────────────────────────────────────────────
 interface MicroChartProps {
@@ -450,7 +428,7 @@ export default function Dashboard() {
                         {s.status === 'COMPLETED' && (
                           <span className="text-zinc-600">{s.active_run_count}r · {s.ooc_count} OOC</span>
                         )}
-                        <StatusBadge status={s.status} />
+                        <StatusBadge status={s.status} variant="inline" />
                       </div>
                     </button>
                   ))}

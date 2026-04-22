@@ -16,6 +16,8 @@ from app.domain.signal.schemas import (
     ChannelChunkData,
     ChannelMacroData,
     MacroViewResponse,
+    ProcessSignalRequest,
+    RawColumnsResponse,
     RunBound,
     RunChunkResponse,
     SignalMetadataResponse,
@@ -40,8 +42,11 @@ class SignalService:
         file_bytes: bytes,
         session_factory: async_sessionmaker,
     ) -> SignalMetadata:
-        from app.application.signal.pipeline import run_pipeline
+        """Save the raw file and create a metadata record in AWAITING_CONFIG state.
 
+        The processing pipeline is NOT triggered here.  The user must call
+        :meth:`process_signal` after selecting column mappings (EPIC-FLX).
+        """
         ext = os.path.splitext(filename)[1].lower() or ".csv"
         signal = await self.repo.create_signal(
             owner_id=owner_id,
@@ -62,12 +67,118 @@ class SignalService:
         await self.session.commit()
         await self.session.refresh(signal)
 
+        return signal
+
+    # ── Column inspection ────────────────────────────────────────────────────
+
+    async def get_raw_columns(self, signal_id: uuid.UUID) -> RawColumnsResponse:
+        """Return column descriptors for the raw uploaded file.
+
+        Only available when the signal is in AWAITING_CONFIG state.
+
+        Raises:
+            ValueError: If signal not found, wrong state, or file unreadable.
+        """
+        from app.application.signal.column_inspector import ColumnInspector
+
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise ValueError("Signal not found")
+        if signal.status != ProcessingStatus.AWAITING_CONFIG:
+            raise LookupError(
+                f"Column preview is only available for signals awaiting configuration "
+                f"(current status: {signal.status})"
+            )
+        if not signal.file_path:
+            raise ValueError("Raw file path is not set")
+
+        columns = ColumnInspector().inspect_columns(signal.file_path)
+        return RawColumnsResponse(signal_id=signal_id, columns=columns)
+
+    # ── Process (trigger pipeline with user config) ──────────────────────────
+
+    async def process_signal(
+        self,
+        signal_id: uuid.UUID,
+        request: ProcessSignalRequest,
+        session_factory: async_sessionmaker,
+    ) -> SignalMetadata:
+        """Validate column config, persist it, and queue the pipeline.
+
+        Raises:
+            ValueError: Signal not found or file unreadable.
+            LookupError: Signal not in AWAITING_CONFIG state.
+            KeyError: Submitted column name not found in the file.
+        """
+        from app.application.signal.pipeline import _load_raw_dataframe, run_pipeline
+
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise ValueError("Signal not found")
+        if signal.status != ProcessingStatus.AWAITING_CONFIG:
+            raise LookupError(
+                f"Signal is not awaiting configuration (status: {signal.status})"
+            )
+
+        # Server-side column validation — read only the header (1 row).
+        df_head = _load_raw_dataframe(signal.file_path).head(1)
+        file_cols = set(df_head.columns)
+
+        if request.time_column not in file_cols:
+            raise KeyError(f"time_column '{request.time_column}' not found in file")
+        bad_sigs = [c for c in request.signal_columns if c not in file_cols]
+        if bad_sigs:
+            raise KeyError(f"signal_columns not found in file: {bad_sigs}")
+        if request.time_column in request.signal_columns:
+            raise ValueError("time_column cannot also appear in signal_columns")
+
+        await self.repo.save_column_config(
+            signal_id, request.time_column, request.signal_columns
+        )
+        await self.session.refresh(signal)
+
         task = asyncio.create_task(
-            run_pipeline(signal.id, abs_path, session_factory, self.storage)
+            run_pipeline(
+                signal.id,
+                signal.file_path,
+                session_factory,
+                self.storage,
+                time_column=request.time_column,
+                signal_columns=request.signal_columns,
+            )
         )
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
+        return signal
+
+    # ── Reconfigure ──────────────────────────────────────────────────────────
+
+    async def reconfigure_signal(self, signal_id: uuid.UUID) -> SignalMetadata:
+        """Reset a COMPLETED or FAILED signal back to AWAITING_CONFIG.
+
+        Deletes all run_segments and the processed Parquet file.
+        The raw uploaded file is preserved.
+
+        Raises:
+            ValueError: Signal not found.
+            LookupError: Signal is currently PROCESSING (cannot interrupt).
+        """
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise ValueError("Signal not found")
+        if signal.status == ProcessingStatus.PROCESSING:
+            raise LookupError("Cannot reconfigure a signal while it is being processed")
+
+        # Delete the processed Parquet from storage (best-effort; ignore missing).
+        if signal.processed_file_path:
+            try:
+                await self.storage.delete(signal.processed_file_path)
+            except Exception:
+                pass
+
+        await self.repo.reset_for_reconfiguration(signal_id)
+        await self.session.refresh(signal)
         return signal
 
     # ── List ────────────────────────────────────────────────────────────────
