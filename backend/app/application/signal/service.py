@@ -276,6 +276,11 @@ class SignalService:
 
         x: list[float] = df["timestamp_s"].to_list()
 
+        # Read the epoch offset if stored (present for temporal time columns).
+        t0_epoch_s: float | None = (
+            float(df["t0_epoch_s"][0]) if "t0_epoch_s" in df.columns else None
+        )
+
         # Return all original data points for every channel (no downsampling)
         channel_data: list[ChannelMacroData] = []
         for ch_name in channel_names:
@@ -301,6 +306,7 @@ class SignalService:
             x=x,
             channels=channel_data,
             runs=run_bounds,
+            t0_epoch_s=t0_epoch_s,
         )
 
     # ── Run chunks ──────────────────────────────────────────────────────────
@@ -370,4 +376,3 @@ class SignalService:
             return names if isinstance(names, list) and names else ["value"]
         except Exception:
             return ["value"]
-
