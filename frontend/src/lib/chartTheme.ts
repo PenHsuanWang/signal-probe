@@ -32,7 +32,9 @@ export const OOC_MARKER = {
 
 const LIGHT_AXIS = {
   color: '#1a1a1a',
-  gridcolor: 'rgba(0,0,0,0)',
+  gridcolor: 'rgba(0,0,0,0.10)',
+  showgrid: true,
+  griddash: 'dash' as const,
   zerolinecolor: '#1a1a1a',
   zerolinewidth: 1,
   ticks: 'inside' as const,
@@ -75,7 +77,7 @@ export function buildChartTheme(theme: Theme): Partial<Plotly.Layout> {
 
   return {
     paper_bgcolor: isLight ? '#ffffff' : 'transparent',
-    plot_bgcolor: isLight ? '#ffffff' : 'transparent',
+    plot_bgcolor: isLight ? '#f5f5f5' : 'transparent',
     font: {
       family: 'Inter, ui-sans-serif, sans-serif',
       color: isLight ? '#1a1a1a' : '#9ca3af',
