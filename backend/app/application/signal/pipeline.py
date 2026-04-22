@@ -260,7 +260,7 @@ async def run_pipeline(
     raw_file_path: str,
     session_factory,  # async_sessionmaker
     storage: IStorageAdapter,
-    csv_format: str = "auto",
+    csv_format: str = "auto",  # "wide", "stacked", or "auto" (internal legacy path)
     time_column: str | None = None,
     signal_columns: list[str] | None = None,
     stacked_channel_filter: list[str] | None = None,
@@ -273,8 +273,9 @@ async def run_pipeline(
       optional *stacked_channel_filter* to select a subset of channels.
     * ``csv_format="wide"`` with *time_column* and *signal_columns* provided:
       Use the explicit user-configured wide-format reader (EPIC-FLX).
-    * Otherwise (``csv_format="auto"`` or unrecognised value): Fall back to
-      the auto-detecting reader for backward compatibility (ADR-008).
+    * ``csv_format="auto"`` (default, internal use only): Fall back to the
+      auto-detecting reader for backward compatibility (ADR-008).  This value
+      is intentionally not exposed through the public API schemas.
     """
     async with session_factory() as session:
         repo = SignalRepository(session)

@@ -97,7 +97,10 @@ class ColumnInspector:
             )
 
         signal_names: list[str] = sorted(
-            str(v) for v in names_df[signal_name_col].drop_nulls().unique().to_list()
+            # Cast to str defensively: signal_name values should always be strings
+            # but a CSV with a numeric-looking column may be inferred as int/float.
+            str(v)
+            for v in names_df[signal_name_col].drop_nulls().unique().to_list()
         )
         return "stacked", signal_names
 

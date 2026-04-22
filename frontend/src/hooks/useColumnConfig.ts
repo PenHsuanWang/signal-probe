@@ -28,6 +28,7 @@ interface ColumnConfigState {
 }
 
 type Action =
+  | { type: 'FETCH_START' }
   | { type: 'FETCH_SUCCESS'; payload: RawColumnsResponse }
   | { type: 'FETCH_ERROR'; payload: string }
   | { type: 'SET_TIME_COL'; payload: string }
@@ -40,6 +41,8 @@ type Action =
 
 function reducer(state: ColumnConfigState, action: Action): ColumnConfigState {
   switch (action.type) {
+    case 'FETCH_START':
+      return { ...INITIAL_STATE };
     case 'FETCH_SUCCESS': {
       const { csv_format, stacked_signal_names, columns } = action.payload;
       if (csv_format === 'stacked') {
@@ -186,7 +189,7 @@ export function useColumnConfig(
   // Fetch column descriptors on mount (or when signalId changes).
   useEffect(() => {
     let cancelled = false;
-    dispatch({ type: 'FETCH_SUCCESS', payload: { signal_id: signalId, columns: [], csv_format: 'wide', stacked_signal_names: [] } }); // reset to loading
+    dispatch({ type: 'FETCH_START' });
     getRawColumns(signalId)
       .then((data) => {
         if (!cancelled) dispatch({ type: 'FETCH_SUCCESS', payload: data });

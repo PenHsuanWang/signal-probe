@@ -188,7 +188,7 @@ function StackedChannelPicker({
           <button
             type="button"
             onClick={onSelectAll}
-            className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
+            className="text-[10px] font-sans text-brand-400 hover:text-brand-300 transition-colors"
           >
             Select all
           </button>
