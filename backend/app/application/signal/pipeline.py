@@ -40,14 +40,39 @@ logger = logging.getLogger(__name__)
 
 _STACKED_REQUIRED_COLS = {"datetime", "signal_name", "signal_value"}
 
+# Maps lower-cased non-standard column names → canonical stacked-format names.
+# Extend this dict whenever a new vendor variant is encountered.
+_STACKED_COL_ALIASES: dict[str, str] = {
+    "measurement_datetime": "datetime",
+    "measurement_value": "signal_value",
+}
+
+
+def _normalize_stacked_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Lower-case all column names and resolve known stacked-format aliases.
+
+    Applies :data:`_STACKED_COL_ALIASES` so that variant column names such as
+    ``measurement_datetime`` and ``measurement_value`` are mapped to the
+    canonical names ``datetime`` and ``signal_value`` before any further
+    processing.  Extra columns (e.g. ``equipment``, ``unit``) are preserved
+    unchanged and will be dropped implicitly by the downstream pivot.
+    """
+    rename_map: dict[str, str] = {}
+    for c in df.columns:
+        target = _STACKED_COL_ALIASES.get(c.lower(), c.lower())
+        if target != c:
+            rename_map[c] = target
+    return df.rename(rename_map) if rename_map else df
+
 
 def _is_stacked_format(df: pl.DataFrame) -> bool:
     """Return True when *df* has the canonical long/stacked-format columns.
 
-    Detection is case-insensitive; extra columns in the file are ignored.
+    Detection is case-insensitive and resolves known column-name aliases
+    (e.g. ``measurement_datetime`` → ``datetime``); extra columns are ignored.
     """
-    lower_cols = {c.lower() for c in df.columns}
-    return _STACKED_REQUIRED_COLS.issubset(lower_cols)
+    normalised = {_STACKED_COL_ALIASES.get(c.lower(), c.lower()) for c in df.columns}
+    return _STACKED_REQUIRED_COLS.issubset(normalised)
 
 
 # ── Raw file loader ───────────────────────────────────────────────────────────
@@ -95,8 +120,9 @@ def _read_stacked_signal_file(
     Raises:
         ValueError: If the DataFrame is empty after cleaning or has no channels.
     """
-    # Normalise column names so detection is case-insensitive
-    df = df.rename({c: c.lower() for c in df.columns})
+    # Normalise column names: lower-case + resolve known aliases
+    # (e.g. measurement_datetime → datetime, measurement_value → signal_value)
+    df = _normalize_stacked_columns(df)
 
     df = df.with_columns(pl.col("signal_value").cast(pl.Float64)).drop_nulls(
         subset=["datetime", "signal_name", "signal_value"]
