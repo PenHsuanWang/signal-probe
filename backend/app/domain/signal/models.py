@@ -28,6 +28,9 @@ class SignalMetadata(Base):
     )
     # JSON-encoded list of channel names, e.g. '["value"]' or '["temp","pressure"]'
     channel_names: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # User-selected column configuration (AWAITING_CONFIG → PENDING transition)
+    time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    signal_columns: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list
 
     runs: Mapped[list["RunSegment"]] = relationship(
         "RunSegment", back_populates="signal", cascade="all, delete-orphan"

@@ -1,29 +1,13 @@
-import { useState } from 'react';
-import { Database, UploadCloud, RefreshCw, Search, Pencil, Trash2, Check, X } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { Database, UploadCloud, Search, Pencil, Trash2, Check, X, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import ColumnConfigPanel from '../components/ColumnConfigPanel';
 import FileUploader from '../components/FileUploader';
+import StatusBadge from '../components/StatusBadge';
 import { useSignals } from '../context/SignalsContext';
-import { deleteSignal, renameSignal } from '../lib/api';
+import { deleteSignal, reconfigureSignal, renameSignal } from '../lib/api';
 import { scientificColor } from '../lib/chartTheme';
 import type { SignalMetadata } from '../types/signal';
-
-function StatusBadge({ status }: { status: SignalMetadata['status'] }) {
-  const cls: Record<SignalMetadata['status'], string> = {
-    PENDING:    'text-yellow-400 bg-yellow-400/10',
-    PROCESSING: 'text-blue-400   bg-blue-400/10',
-    COMPLETED:  'text-green-400  bg-green-400/10',
-    FAILED:     'text-red-400    bg-red-400/10',
-  };
-  const labels: Record<SignalMetadata['status'], string> = {
-    PENDING: 'Pending', PROCESSING: 'Processing', COMPLETED: 'Completed', FAILED: 'Failed',
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-sans font-semibold ${cls[status]}`}>
-      {status === 'PROCESSING' && <RefreshCw size={9} className="animate-spin" />}
-      {labels[status]}
-    </span>
-  );
-}
 
 function ChannelPills({ names }: { names: string[] }) {
   return (
@@ -51,12 +35,16 @@ export default function SignalsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [configuringId, setConfiguringId] = useState<string | null>(null);
 
-  const filtered = signals.filter((s) =>
-    s.original_filename.toLowerCase().includes(search.toLowerCase())
+  const filtered = useMemo(
+    () => signals.filter((s) =>
+      s.original_filename.toLowerCase().includes(search.toLowerCase())
+    ),
+    [signals, search],
   );
 
-  async function handleRenameSubmit(s: SignalMetadata) {
+  const handleRenameSubmit = useCallback(async (s: SignalMetadata) => {
     const trimmed = renameValue.trim();
     if (!trimmed || trimmed === s.original_filename) {
       setRenamingId(null);
@@ -71,9 +59,9 @@ export default function SignalsPage() {
     } finally {
       setRenamingId(null);
     }
-  }
+  }, [renameValue, refresh]);
 
-  async function handleDelete(id: string) {
+  const handleDelete = useCallback(async (id: string) => {
     setDeletingId(id);
     try {
       await deleteSignal(id);
@@ -82,7 +70,26 @@ export default function SignalsPage() {
       setDeletingId(null);
       setConfirmDeleteId(null);
     }
-  }
+  }, [refresh]);
+
+  const handleReconfigure = useCallback(async (id: string) => {
+    try {
+      await reconfigureSignal(id);
+      await refresh();
+      setConfiguringId(id);
+    } catch { /* ignore */ }
+  }, [refresh]);
+
+  const handleUploadComplete = useCallback((signal: SignalMetadata) => {
+    refresh();
+    setShowUploader(false);
+    if (signal?.id) setConfiguringId(signal.id);
+  }, [refresh]);
+
+  const handleConfigured = useCallback(async () => {
+    setConfiguringId(null);
+    await refresh();
+  }, [refresh]);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -110,7 +117,7 @@ export default function SignalsPage() {
       {/* Upload panel */}
       {showUploader && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-          <FileUploader onUploadComplete={() => { refresh(); setShowUploader(false); }} />
+          <FileUploader onUploadComplete={handleUploadComplete} />
         </div>
       )}
 
@@ -211,12 +218,29 @@ export default function SignalsPage() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
+                  {s.status === 'AWAITING_CONFIG' && (
+                    <button
+                      onClick={() => setConfiguringId(s.id)}
+                      className="text-[10px] font-sans text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      Configure →
+                    </button>
+                  )}
                   {s.status === 'COMPLETED' && (
                     <button
                       onClick={() => navigate('/')}
                       className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
                     >
                       Explore →
+                    </button>
+                  )}
+                  {(s.status === 'COMPLETED' || s.status === 'FAILED') && (
+                    <button
+                      onClick={() => handleReconfigure(s.id)}
+                      className="text-zinc-500 hover:text-purple-400 transition-colors"
+                      title="Reconfigure columns"
+                    >
+                      <RotateCcw size={12} />
                     </button>
                   )}
                   <button
@@ -260,6 +284,17 @@ export default function SignalsPage() {
           </div>
         )}
       </div>
+
+      {/* Column config panel — rendered as overlay below table */}
+      {configuringId && (
+        <div className="rounded-lg p-5" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+          <ColumnConfigPanel
+            signalId={configuringId}
+            onConfigured={handleConfigured}
+            onCancel={() => setConfiguringId(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }

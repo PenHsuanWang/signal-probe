@@ -8,6 +8,7 @@ class SignalState(StrEnum):
 
 
 class ProcessingStatus(StrEnum):
+    AWAITING_CONFIG = "AWAITING_CONFIG"
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"

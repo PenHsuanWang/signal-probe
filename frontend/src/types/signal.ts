@@ -1,6 +1,11 @@
 // TypeScript interfaces mirroring backend Pydantic schemas
 
-export type ProcessingStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
+export type ProcessingStatus =
+  | "AWAITING_CONFIG"
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "FAILED";
 export type SignalState = "IDLE" | "ACTIVE" | "OOC";
 
 export interface SignalMetadata {
@@ -12,8 +17,31 @@ export interface SignalMetadata {
   ooc_count: number;
   error_message: string | null;
   channel_names: string[];
+  /** Populated after the user selects a column config (EPIC-FLX) */
+  time_column: string | null;
+  signal_columns: string[] | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Column selection (EPIC-FLX) ──────────────────────────────────────────────
+
+export interface ColumnDescriptor {
+  name: string;
+  dtype: string;
+  null_count: number;
+  sample_values: string[];
+  is_candidate_time: boolean;
+}
+
+export interface RawColumnsResponse {
+  signal_id: string;
+  columns: ColumnDescriptor[];
+}
+
+export interface ProcessSignalRequest {
+  time_column: string;
+  signal_columns: string[];
 }
 
 export interface RunBound {

@@ -25,7 +25,7 @@ class SignalRepository:
             owner_id=owner_id,
             original_filename=original_filename,
             file_path=file_path,
-            status=ProcessingStatus.PENDING,
+            status=ProcessingStatus.AWAITING_CONFIG,
         )
         self.session.add(signal)
         await self.session.commit()
@@ -96,6 +96,55 @@ class SignalRepository:
             .values(**values)
         )
         await self.session.commit()
+
+    async def save_column_config(
+        self,
+        signal_id: uuid.UUID,
+        time_column: str,
+        signal_columns: list[str],
+    ) -> None:
+        """Persist user-selected column mapping and advance status to PENDING."""
+        import json
+
+        await self.session.execute(
+            update(SignalMetadata)
+            .where(SignalMetadata.id == signal_id)
+            .values(
+                time_column=time_column,
+                signal_columns=json.dumps(signal_columns),
+                status=ProcessingStatus.PENDING.value,
+                error_message=None,
+            )
+        )
+        await self.session.commit()
+
+    async def reset_for_reconfiguration(self, signal_id: uuid.UUID) -> bool:
+        """Delete processed artifacts and reset signal to AWAITING_CONFIG.
+
+        Removes all child RunSegment rows and clears every processing field so
+        the user can submit a fresh column configuration.  The raw uploaded file
+        is intentionally left untouched.
+        """
+        await self.session.execute(
+            delete(RunSegment).where(RunSegment.signal_id == signal_id)
+        )
+        result = await self.session.execute(
+            update(SignalMetadata)
+            .where(SignalMetadata.id == signal_id)
+            .values(
+                status=ProcessingStatus.AWAITING_CONFIG.value,
+                time_column=None,
+                signal_columns=None,
+                channel_names=None,
+                processed_file_path=None,
+                error_message=None,
+                total_points=None,
+                active_run_count=0,
+                ooc_count=0,
+            )
+        )
+        await self.session.commit()
+        return result.rowcount > 0
 
     # ── RunSegment CRUD ─────────────────────────────────────────────────────
 

@@ -5,6 +5,8 @@ import type {
   GroupMemberUpsert,
   GroupUpdateRequest,
   MacroViewResponse,
+  ProcessSignalRequest,
+  RawColumnsResponse,
   RunChunkResponse,
   SignalMetadata,
 } from '../types/signal';
@@ -79,6 +81,26 @@ export async function getRunChunks(
   const params = new URLSearchParams();
   runIds.forEach((id) => params.append('run_ids', id));
   const res = await api.get<RunChunkResponse[]>(`/signals/${signalId}/runs?${params}`);
+  return res.data;
+}
+
+// ── Column config API helpers (EPIC-FLX) ────────────────────────────────────
+
+export async function getRawColumns(signalId: string): Promise<RawColumnsResponse> {
+  const res = await api.get<RawColumnsResponse>(`/signals/${signalId}/raw-columns`);
+  return res.data;
+}
+
+export async function processSignal(
+  signalId: string,
+  body: ProcessSignalRequest
+): Promise<SignalMetadata> {
+  const res = await api.post<SignalMetadata>(`/signals/${signalId}/process`, body);
+  return res.data;
+}
+
+export async function reconfigureSignal(signalId: string): Promise<SignalMetadata> {
+  const res = await api.post<SignalMetadata>(`/signals/${signalId}/reconfigure`);
   return res.data;
 }
 

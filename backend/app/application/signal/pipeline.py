@@ -16,6 +16,10 @@ Long / stacked format (new):
         2026-04-20 00:01:00, signal_1, 0.34
         ...
         2026-04-20 00:00:00, signal_2, -0.05
+
+User-configured format (EPIC-FLX):
+    Caller explicitly provides time_column and signal_columns.  The auto-detection
+    heuristics are bypassed entirely; only the specified columns are processed.
 """
 
 import io
@@ -192,20 +196,76 @@ def _read_signal_file(raw_path: str) -> tuple[list[float], dict[str, list]]:
     return _read_wide_signal_file(df)
 
 
+def _read_with_config(
+    raw_path: str,
+    time_column: str,
+    signal_columns: list[str],
+) -> tuple[list[float], dict[str, list[float]]]:
+    """Read a raw file using an explicit user-supplied column mapping (EPIC-FLX).
+
+    Bypasses all auto-detection heuristics.  The caller is responsible for
+    validating that *time_column* and *signal_columns* exist in the file before
+    invoking this function (validated in :meth:`SignalService.process_signal`).
+
+    Args:
+        raw_path: Absolute path to the raw uploaded file.
+        time_column: Name of the column to use as the time axis.
+        signal_columns: Names of the columns to treat as signal channels.
+
+    Returns:
+        timestamps_s: Elapsed-seconds list starting at 0.0.
+        channels: ``{channel_name: [float, ...]}`` parallel to ``timestamps_s``.
+
+    Raises:
+        ValueError: If any column is missing or the data cannot be cast to float.
+    """
+    df = _load_raw_dataframe(raw_path)
+
+    missing = [c for c in [time_column, *signal_columns] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Columns not found in file: {missing}")
+
+    all_cols = [time_column, *signal_columns]
+    cast_exprs = [pl.col(c).cast(pl.Float64) for c in all_cols]
+    df = df.select(cast_exprs).drop_nulls()
+
+    if df.is_empty():
+        raise ValueError("File contains no valid numeric data points after cleaning.")
+
+    ts: list[float] = df[time_column].to_list()
+    t0 = ts[0]
+    timestamps_s = [t - t0 for t in ts]
+
+    channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_columns}
+    return timestamps_s, channels
+
+
 async def run_pipeline(
     signal_id: uuid.UUID,
     raw_file_path: str,
     session_factory,  # async_sessionmaker
     storage: IStorageAdapter,
+    time_column: str | None = None,
+    signal_columns: list[str] | None = None,
 ) -> None:
-    """Entry point called by BackgroundTasks."""
+    """Entry point called by BackgroundTasks.
+
+    When *time_column* and *signal_columns* are provided (EPIC-FLX user-configured
+    flow) the explicit mapping is used.  When both are ``None`` the legacy
+    auto-detection path is used (backward compatibility, ADR-008).
+    """
     async with session_factory() as session:
         repo = SignalRepository(session)
 
         await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
-            timestamps, channels = _read_signal_file(raw_file_path)
+            if time_column and signal_columns:
+                timestamps, channels = _read_with_config(
+                    raw_file_path, time_column, signal_columns
+                )
+            else:
+                timestamps, channels = _read_signal_file(raw_file_path)
             channel_names = list(channels.keys())
 
             # Classify + segment on the primary (first) channel

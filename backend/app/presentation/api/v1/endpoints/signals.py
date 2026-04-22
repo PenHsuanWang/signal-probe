@@ -13,6 +13,8 @@ from app.application.signal.service import SignalService
 from app.db.session import AsyncSessionLocal
 from app.domain.signal.schemas import (
     MacroViewResponse,
+    ProcessSignalRequest,
+    RawColumnsResponse,
     RunChunkResponse,
     SignalMetadataResponse,
     SignalRenameRequest,
@@ -140,5 +142,96 @@ async def get_run_chunks(
         raise HTTPException(status_code=404, detail="Signal not found")
     try:
         return await svc.get_run_chunks(signal_id, run_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/{signal_id}/raw-columns",
+    response_model=RawColumnsResponse,
+    summary="Preview raw file columns for configuration",
+)
+async def get_raw_columns(
+    signal_id: uuid.UUID,
+    session: DbSession,
+    storage: StorageDep,
+    current_user: CurrentUser,
+) -> RawColumnsResponse:
+    """Return column descriptors (name, dtype, samples) for the raw uploaded file.
+
+    Only available when the signal is in ``AWAITING_CONFIG`` state.
+    """
+    svc = SignalService(session, storage)
+    signal = await svc.get_signal(signal_id)
+    if signal is None or signal.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    try:
+        return await svc.get_raw_columns(signal_id)
+    except LookupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/{signal_id}/process",
+    response_model=SignalMetadataResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Submit column config and trigger processing pipeline",
+)
+async def process_signal(
+    signal_id: uuid.UUID,
+    body: ProcessSignalRequest,
+    session: DbSession,
+    storage: StorageDep,
+    current_user: CurrentUser,
+) -> SignalMetadataResponse:
+    """Validate user-selected ``time_column`` + ``signal_columns``.
+
+    Starts the processing pipeline.  The signal must be in ``AWAITING_CONFIG``
+    state.  Column names are validated server-side against the actual file
+    headers before the pipeline is queued.
+    server-side against the actual file headers before the pipeline is queued.
+    """
+    svc = SignalService(session, storage)
+    signal = await svc.get_signal(signal_id)
+    if signal is None or signal.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    try:
+        result = await svc.process_signal(signal_id, body, AsyncSessionLocal)
+        return SignalMetadataResponse.model_validate(result)
+    except LookupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except KeyError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post(
+    "/{signal_id}/reconfigure",
+    response_model=SignalMetadataResponse,
+    summary="Reset signal to AWAITING_CONFIG, clearing processed artifacts",
+)
+async def reconfigure_signal(
+    signal_id: uuid.UUID,
+    session: DbSession,
+    storage: StorageDep,
+    current_user: CurrentUser,
+) -> SignalMetadataResponse:
+    """Reset a ``COMPLETED`` or ``FAILED`` signal so the user can reselect columns.
+
+    All run segments and the processed Parquet file are deleted.
+    The raw uploaded file is preserved.
+    """
+    svc = SignalService(session, storage)
+    signal = await svc.get_signal(signal_id)
+    if signal is None or signal.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    try:
+        result = await svc.reconfigure_signal(signal_id)
+        return SignalMetadataResponse.model_validate(result)
+    except LookupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
