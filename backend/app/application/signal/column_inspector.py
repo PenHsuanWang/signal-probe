@@ -31,6 +31,13 @@ _TIME_NAME_RE = re.compile(
 # Required columns (lower-cased) that identify a long/stacked-format CSV.
 _STACKED_REQUIRED_COLS = frozenset({"datetime", "signal_name", "signal_value"})
 
+# Maps lower-cased non-standard column names → canonical stacked-format names.
+# Keep in sync with pipeline._STACKED_COL_ALIASES.
+_STACKED_COL_ALIASES: dict[str, str] = {
+    "measurement_datetime": "datetime",
+    "measurement_value": "signal_value",
+}
+
 
 class ColumnInspector:
     """Inspect raw CSV / Parquet column metadata without full pipeline execution."""
@@ -76,13 +83,19 @@ class ColumnInspector:
                 raw_path, n_rows=1, infer_schema_length=1, ignore_errors=True
             )
 
-        lower_cols = {c.lower() for c in header_df.columns}
+        lower_cols = {
+            _STACKED_COL_ALIASES.get(c.lower(), c.lower()) for c in header_df.columns
+        }
         if not _STACKED_REQUIRED_COLS.issubset(lower_cols):
             return "wide", []
 
         # Stacked format detected — find the actual column name for signal_name.
+        # The column may still carry its original (pre-alias) name in the file,
+        # so resolve via _STACKED_COL_ALIASES for future-proofing.
         signal_name_col = next(
-            c for c in header_df.columns if c.lower() == "signal_name"
+            c
+            for c in header_df.columns
+            if _STACKED_COL_ALIASES.get(c.lower(), c.lower()) == "signal_name"
         )
 
         # Read only the signal_name column to enumerate all unique channel names.
