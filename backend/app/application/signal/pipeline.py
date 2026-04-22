@@ -212,9 +212,6 @@ def _read_wide_signal_file(
         time_col = numeric_cols[0]
         ch_cols = numeric_cols[1:]
 
-    if df.is_empty():
-        raise ValueError("File contains no valid numeric data points after cleaning.")
-
     time_dtype = df[time_col].dtype if time_col in df.columns else None
     if time_dtype is not None and time_dtype.is_temporal():
         # Temporal time column: cast signal channels to Float64, keep time as-is
@@ -226,7 +223,10 @@ def _read_wide_signal_file(
                 "File contains no valid numeric data points after cleaning."
             )
 
-        # Convert temporal column to elapsed seconds; record epoch of t0
+        # Convert temporal column to elapsed seconds; record epoch of t0.
+        # We use cast(Int64) (microseconds since epoch) rather than
+        # .dt.total_seconds() because the latter returns Int64 and truncates
+        # sub-second precision.
         epoch_us_series = df[time_col].cast(pl.Int64)
         t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
         timestamps_s: list[float] = [
@@ -328,7 +328,10 @@ def _read_with_config(
                 "File contains no valid numeric data points after cleaning."
             )
 
-        # Convert temporal column to elapsed seconds; record epoch of t0
+        # Convert temporal column to elapsed seconds; record epoch of t0.
+        # We use cast(Int64) (microseconds since epoch) rather than
+        # .dt.total_seconds() because the latter returns Int64 and truncates
+        # sub-second precision.
         epoch_us_series = df[time_column].cast(pl.Int64)
         t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
         timestamps_s: list[float] = [
