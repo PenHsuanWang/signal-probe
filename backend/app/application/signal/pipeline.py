@@ -66,6 +66,7 @@ def _load_raw_dataframe(raw_path: str) -> pl.DataFrame:
 
 def _read_stacked_signal_file(
     df: pl.DataFrame,
+    channel_filter: list[str] | None = None,
 ) -> tuple[list[float], dict[str, list[float | None]]]:
     """Parse a long/stacked CSV into (timestamps_s, channels).
 
@@ -76,11 +77,15 @@ def _read_stacked_signal_file(
     3. Pivot on ``signal_name`` → wide DataFrame (outer-join semantics;
        missing positions become ``null``).
     4. Sort by ``datetime`` and compute elapsed seconds from the first timestamp.
-    5. Return ``(timestamps_s, {signal_name: [float | None, ...]})`` where
+    5. Apply *channel_filter* if provided (keep only the requested channels).
+    6. Return ``(timestamps_s, {signal_name: [float | None, ...]})`` where
        ``None`` marks timestamps absent for a given channel.
 
     Args:
         df: Raw DataFrame loaded from the stacked CSV.
+        channel_filter: Optional list of signal names to include.  When
+            ``None`` (default) all channels are included.  Names not present
+            in the file are silently ignored after pivoting.
 
     Returns:
         timestamps_s: Elapsed-seconds list starting at 0.0.
@@ -114,6 +119,16 @@ def _read_stacked_signal_file(
     ch_cols = sorted(c for c in aligned.columns if c != "datetime")
     if not ch_cols:
         raise ValueError("Stacked CSV contains no signal channels after pivoting.")
+
+    # Apply optional channel filter — keep only requested names that exist.
+    if channel_filter is not None:
+        filter_set = set(channel_filter)
+        filtered_cols = [c for c in ch_cols if c in filter_set]
+        if not filtered_cols:
+            raise ValueError(
+                "None of the requested channel names were found in the stacked CSV."
+            )
+        ch_cols = filtered_cols
 
     # Compute elapsed seconds (Float64) from the first timestamp.
     # Polars stores Datetime as int64 microseconds; dividing by 1e6 gives seconds.
@@ -245,14 +260,21 @@ async def run_pipeline(
     raw_file_path: str,
     session_factory,  # async_sessionmaker
     storage: IStorageAdapter,
+    csv_format: str = "auto",
     time_column: str | None = None,
     signal_columns: list[str] | None = None,
+    stacked_channel_filter: list[str] | None = None,
 ) -> None:
     """Entry point called by BackgroundTasks.
 
-    When *time_column* and *signal_columns* are provided (EPIC-FLX user-configured
-    flow) the explicit mapping is used.  When both are ``None`` the legacy
-    auto-detection path is used (backward compatibility, ADR-008).
+    Routing logic
+    -------------
+    * ``csv_format="stacked"``: Use the stacked/long-format reader with an
+      optional *stacked_channel_filter* to select a subset of channels.
+    * ``csv_format="wide"`` with *time_column* and *signal_columns* provided:
+      Use the explicit user-configured wide-format reader (EPIC-FLX).
+    * Otherwise (``csv_format="auto"`` or unrecognised value): Fall back to
+      the auto-detecting reader for backward compatibility (ADR-008).
     """
     async with session_factory() as session:
         repo = SignalRepository(session)
@@ -260,7 +282,12 @@ async def run_pipeline(
         await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
-            if time_column and signal_columns:
+            if csv_format == "stacked":
+                df = _load_raw_dataframe(raw_file_path)
+                timestamps, channels = _read_stacked_signal_file(
+                    df, stacked_channel_filter
+                )
+            elif time_column and signal_columns:
                 timestamps, channels = _read_with_config(
                     raw_file_path, time_column, signal_columns
                 )

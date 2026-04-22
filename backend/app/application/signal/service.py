@@ -74,6 +74,11 @@ class SignalService:
     async def get_raw_columns(self, signal_id: uuid.UUID) -> RawColumnsResponse:
         """Return column descriptors for the raw uploaded file.
 
+        Also detects whether the file is in wide or stacked (long) format.
+        For stacked format, the unique signal names from the ``signal_name``
+        column are included in the response so the frontend can render a
+        channel-picker instead of the generic column selector.
+
         Only available when the signal is in AWAITING_CONFIG state.
 
         Raises:
@@ -92,8 +97,15 @@ class SignalService:
         if not signal.file_path:
             raise ValueError("Raw file path is not set")
 
-        columns = ColumnInspector().inspect_columns(signal.file_path)
-        return RawColumnsResponse(signal_id=signal_id, columns=columns)
+        inspector = ColumnInspector()
+        columns = inspector.inspect_columns(signal.file_path)
+        csv_format, stacked_signal_names = inspector.detect_csv_format(signal.file_path)
+        return RawColumnsResponse(
+            signal_id=signal_id,
+            columns=columns,
+            csv_format=csv_format,
+            stacked_signal_names=stacked_signal_names,
+        )
 
     # ── Process (trigger pipeline with user config) ──────────────────────────
 
@@ -104,6 +116,10 @@ class SignalService:
         session_factory: async_sessionmaker,
     ) -> SignalMetadata:
         """Validate column config, persist it, and queue the pipeline.
+
+        Supports both wide format (explicit ``time_column`` + ``signal_columns``)
+        and stacked/long format (``csv_format="stacked"`` with an optional
+        ``stacked_channel_filter``).
 
         Raises:
             ValueError: Signal not found or file unreadable.
@@ -120,21 +136,43 @@ class SignalService:
                 f"Signal is not awaiting configuration (status: {signal.status})"
             )
 
-        # Server-side column validation — read only the header (1 row).
-        df_head = _load_raw_dataframe(signal.file_path).head(1)
-        file_cols = set(df_head.columns)
+        if request.csv_format == "wide":
+            # Server-side column validation — read only the header (1 row).
+            df_head = _load_raw_dataframe(signal.file_path).head(1)
+            file_cols = set(df_head.columns)
 
-        if request.time_column not in file_cols:
-            raise KeyError(f"time_column '{request.time_column}' not found in file")
-        bad_sigs = [c for c in request.signal_columns if c not in file_cols]
-        if bad_sigs:
-            raise KeyError(f"signal_columns not found in file: {bad_sigs}")
-        if request.time_column in request.signal_columns:
-            raise ValueError("time_column cannot also appear in signal_columns")
+            if request.time_column not in file_cols:
+                raise KeyError(f"time_column '{request.time_column}' not found in file")
+            bad_sigs = [c for c in request.signal_columns if c not in file_cols]
+            if bad_sigs:
+                raise KeyError(f"signal_columns not found in file: {bad_sigs}")
+            if request.time_column in request.signal_columns:
+                raise ValueError("time_column cannot also appear in signal_columns")
 
-        await self.repo.save_column_config(
-            signal_id, request.time_column, request.signal_columns
-        )
+            config_time_col: str | None = request.time_column
+            config_sig_cols: list[str] = request.signal_columns
+        else:
+            # Stacked format — validate the optional channel filter.
+            if request.stacked_channel_filter:
+                from app.application.signal.column_inspector import ColumnInspector
+
+                _, available_names = ColumnInspector().detect_csv_format(
+                    signal.file_path
+                )
+                available_set = set(available_names)
+                bad_channels = [
+                    c for c in request.stacked_channel_filter if c not in available_set
+                ]
+                if bad_channels:
+                    raise KeyError(
+                        f"stacked channel names not found in file: {bad_channels}"
+                    )
+            # Store None for time_column (implicit in stacked format) and the
+            # optional channel filter in signal_columns.
+            config_time_col = None
+            config_sig_cols = request.stacked_channel_filter or []
+
+        await self.repo.save_column_config(signal_id, config_time_col, config_sig_cols)
         await self.session.refresh(signal)
 
         task = asyncio.create_task(
@@ -143,8 +181,14 @@ class SignalService:
                 signal.file_path,
                 session_factory,
                 self.storage,
-                time_column=request.time_column,
-                signal_columns=request.signal_columns,
+                csv_format=request.csv_format,
+                time_column=request.time_column
+                if request.csv_format == "wide"
+                else None,
+                signal_columns=request.signal_columns
+                if request.csv_format == "wide"
+                else None,
+                stacked_channel_filter=request.stacked_channel_filter,
             )
         )
         _background_tasks.add(task)

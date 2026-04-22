@@ -37,11 +37,21 @@ export interface ColumnDescriptor {
 export interface RawColumnsResponse {
   signal_id: string;
   columns: ColumnDescriptor[];
+  /** Detected CSV format: 'wide' (one column per channel) or 'stacked' (long format). */
+  csv_format: 'wide' | 'stacked';
+  /** Unique signal names from the signal_name column (stacked format only). */
+  stacked_signal_names: string[];
 }
 
 export interface ProcessSignalRequest {
-  time_column: string;
-  signal_columns: string[];
+  /** CSV format to process. Defaults to 'wide'. */
+  csv_format?: 'wide' | 'stacked';
+  /** Time axis column name (required for wide format). */
+  time_column?: string;
+  /** Signal channel column names (required for wide format). */
+  signal_columns?: string[];
+  /** Signal names to include from a stacked CSV (null/omit = all channels). */
+  stacked_channel_filter?: string[] | null;
 }
 
 export interface RunBound {
