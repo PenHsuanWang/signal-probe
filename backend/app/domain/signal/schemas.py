@@ -148,7 +148,7 @@ class ChannelMacroData(BaseModel):
 
 class MacroViewResponse(BaseModel):
     signal_id: uuid.UUID
-    x: list[float]  # shared timestamp axis (LTTB-downsampled on primary channel)
+    x: list[float]  # shared timestamp axis (all original data points)
     channels: list[ChannelMacroData]
     runs: list[RunBound]
 
