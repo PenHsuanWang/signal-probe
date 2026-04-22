@@ -480,7 +480,7 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xs font-semibold font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Macro View</h2>
               <p className="text-xs font-sans mt-0.5" style={{ color: 'var(--sp-text-tertiary)' }}>
-                LTTB-downsampled · drag rangeslider to load runs
+                All data points · drag rangeslider to load runs
                 {macroData && ` · ${macroData.runs.length} runs`}
               </p>
             </div>

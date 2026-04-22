@@ -8,7 +8,6 @@ import uuid
 import polars as pl
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.signal.algorithms import lttb
 from app.domain.signal.enums import ProcessingStatus
 from app.domain.signal.models import RunSegment, SignalMetadata
 from app.domain.signal.repository import SignalRepository
@@ -276,25 +275,14 @@ class SignalService:
         df = pl.read_parquet(signal.processed_file_path)
 
         x: list[float] = df["timestamp_s"].to_list()
-        primary_ch = channel_names[0]
-        primary_y: list[float] = df[primary_ch].to_list()
-        primary_states: list[str] = df[f"{primary_ch}_state"].to_list()
 
-        # Downsample x on primary channel; get shared indices
-        x_down, y_down, states_down = lttb.downsample_with_states(
-            x, primary_y, primary_states
-        )
-
-        # Build per-channel data (reuse downsampled x indices for all channels)
-        sample_indices = _find_sample_indices(x, x_down)
+        # Return all original data points for every channel (no downsampling)
         channel_data: list[ChannelMacroData] = []
         for ch_name in channel_names:
             ch_y: list[float] = df[ch_name].to_list()
             ch_states: list[str] = df[f"{ch_name}_state"].to_list()
-            sampled_y = [ch_y[i] for i in sample_indices]
-            sampled_s = [ch_states[i] for i in sample_indices]
             channel_data.append(
-                ChannelMacroData(channel_name=ch_name, y=sampled_y, states=sampled_s)
+                ChannelMacroData(channel_name=ch_name, y=ch_y, states=ch_states)
             )
 
         run_bounds = [
@@ -310,7 +298,7 @@ class SignalService:
 
         return MacroViewResponse(
             signal_id=signal.id,
-            x=x_down,
+            x=x,
             channels=channel_data,
             runs=run_bounds,
         )
@@ -383,17 +371,3 @@ class SignalService:
         except Exception:
             return ["value"]
 
-
-def _find_sample_indices(original_x: list[float], sampled_x: list[float]) -> list[int]:
-    """Map sampled x values back to their indices in the original array.
-
-    Uses a two-pointer approach (both lists are sorted ascending).
-    """
-    indices: list[int] = []
-    j = 0
-    for sx in sampled_x:
-        while j < len(original_x) and original_x[j] < sx:
-            j += 1
-        indices.append(j)
-        j += 1
-    return indices
