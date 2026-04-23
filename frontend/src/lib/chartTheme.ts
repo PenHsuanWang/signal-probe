@@ -50,6 +50,8 @@ const LIGHT_AXIS = {
 const DARK_AXIS = {
   color: '#9ca3af',
   gridcolor: 'rgba(255,255,255,0.05)',
+  showgrid: true,
+  griddash: 'dash' as const,
   zerolinecolor: '#6b7280',
   zerolinewidth: 1,
   ticks: 'inside' as const,

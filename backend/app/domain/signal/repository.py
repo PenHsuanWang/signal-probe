@@ -1,6 +1,7 @@
+import json
 import uuid
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -52,7 +53,7 @@ class SignalRepository:
         result = await self.session.execute(
             update(SignalMetadata)
             .where(SignalMetadata.id == signal_id)
-            .values(original_filename=new_filename)
+            .values(original_filename=new_filename, updated_at=func.now())
         )
         await self.session.commit()
         return result.rowcount > 0
@@ -75,7 +76,7 @@ class SignalRepository:
         error_message: str | None = None,
         channel_names: list[str] | None = None,
     ) -> None:
-        values: dict = {"status": status.value}
+        values: dict = {"status": status.value, "updated_at": func.now()}
         if total_points is not None:
             values["total_points"] = total_points
         if active_run_count is not None:
@@ -87,8 +88,6 @@ class SignalRepository:
         if error_message is not None:
             values["error_message"] = error_message
         if channel_names is not None:
-            import json
-
             values["channel_names"] = json.dumps(channel_names)
         await self.session.execute(
             update(SignalMetadata)
@@ -112,8 +111,6 @@ class SignalRepository:
         implicit ``datetime`` column) and *signal_columns* holds the optional
         channel filter (empty list = include all channels).
         """
-        import json
-
         await self.session.execute(
             update(SignalMetadata)
             .where(SignalMetadata.id == signal_id)
@@ -122,6 +119,7 @@ class SignalRepository:
                 signal_columns=json.dumps(signal_columns),
                 status=ProcessingStatus.PENDING.value,
                 error_message=None,
+                updated_at=func.now(),
             )
         )
         await self.session.commit()
@@ -149,6 +147,7 @@ class SignalRepository:
                 total_points=None,
                 active_run_count=0,
                 ooc_count=0,
+                updated_at=func.now(),
             )
         )
         await self.session.commit()

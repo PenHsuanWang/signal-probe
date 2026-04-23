@@ -6,8 +6,12 @@ import os
 import uuid
 
 import polars as pl
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.signal.column_inspector import ColumnInspector
+from app.application.signal.pipeline import _load_raw_dataframe, run_pipeline
+from app.core.exceptions import NotFoundException
 from app.domain.signal.enums import ProcessingStatus
 from app.domain.signal.models import RunSegment, SignalMetadata
 from app.domain.signal.repository import SignalRepository
@@ -23,6 +27,11 @@ from app.domain.signal.schemas import (
 )
 from app.infrastructure.storage.interface import IStorageAdapter
 
+# Fire-and-forget task registry.  asyncio discards Task objects that have no
+# live references, which cancels them before they finish.  Storing each task
+# here keeps a strong reference alive until the task completes or raises,
+# at which point the done-callback removes it.  Scoped to a single process;
+# does not survive worker restarts.
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -56,12 +65,10 @@ class SignalService:
         relative_path = f"signals/{signal.id}/raw{ext}"
         abs_path = await self.storage.save(relative_path, file_bytes)
 
-        from sqlalchemy import update as sa_update
-
-        from app.domain.signal.models import SignalMetadata as SM
-
         await self.session.execute(
-            sa_update(SM).where(SM.id == signal.id).values(file_path=abs_path)
+            sa_update(SignalMetadata)
+            .where(SignalMetadata.id == signal.id)
+            .values(file_path=abs_path)
         )
         await self.session.commit()
         await self.session.refresh(signal)
@@ -81,13 +88,13 @@ class SignalService:
         Only available when the signal is in AWAITING_CONFIG state.
 
         Raises:
-            ValueError: If signal not found, wrong state, or file unreadable.
+            NotFoundException: If signal not found.
+            LookupError: If signal is not in AWAITING_CONFIG state.
+            ValueError: If file is unreadable.
         """
-        from app.application.signal.column_inspector import ColumnInspector
-
         signal = await self.repo.get_signal(signal_id)
         if signal is None:
-            raise ValueError("Signal not found")
+            raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.AWAITING_CONFIG:
             raise LookupError(
                 f"Column preview is only available for signals awaiting configuration "
@@ -121,15 +128,14 @@ class SignalService:
         ``stacked_channel_filter``).
 
         Raises:
-            ValueError: Signal not found or file unreadable.
+            NotFoundException: Signal not found.
             LookupError: Signal not in AWAITING_CONFIG state.
             KeyError: Submitted column name not found in the file.
+            ValueError: File unreadable or invalid configuration.
         """
-        from app.application.signal.pipeline import _load_raw_dataframe, run_pipeline
-
         signal = await self.repo.get_signal(signal_id)
         if signal is None:
-            raise ValueError("Signal not found")
+            raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.AWAITING_CONFIG:
             raise LookupError(
                 f"Signal is not awaiting configuration (status: {signal.status})"
@@ -153,8 +159,6 @@ class SignalService:
         else:
             # Stacked format — validate the optional channel filter.
             if request.stacked_channel_filter:
-                from app.application.signal.column_inspector import ColumnInspector
-
                 _, available_names = ColumnInspector().detect_csv_format(
                     signal.file_path
                 )
@@ -204,12 +208,12 @@ class SignalService:
         The raw uploaded file is preserved.
 
         Raises:
-            ValueError: Signal not found.
+            NotFoundException: Signal not found.
             LookupError: Signal is currently PROCESSING (cannot interrupt).
         """
         signal = await self.repo.get_signal(signal_id)
         if signal is None:
-            raise ValueError("Signal not found")
+            raise NotFoundException("Signal not found")
         if signal.status == ProcessingStatus.PROCESSING:
             raise LookupError("Cannot reconfigure a signal while it is being processed")
 
@@ -265,7 +269,7 @@ class SignalService:
     async def get_macro_view(self, signal_id: uuid.UUID) -> MacroViewResponse:
         signal = await self.repo.get_signal(signal_id)
         if signal is None:
-            raise ValueError("Signal not found")
+            raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.COMPLETED:
             raise ValueError(f"Signal is not ready (status={signal.status})")
         if not signal.processed_file_path:
@@ -316,7 +320,7 @@ class SignalService:
     ) -> list[RunChunkResponse]:
         signal = await self.repo.get_signal(signal_id)
         if signal is None:
-            raise ValueError("Signal not found")
+            raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.COMPLETED:
             raise ValueError("Signal is not ready")
         if not signal.processed_file_path:

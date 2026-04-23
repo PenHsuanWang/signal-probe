@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plot } from '../lib/plot';
 import {
   Activity, UploadCloud,
   Layers,
 } from 'lucide-react';
 import FileUploader from '../components/FileUploader';
+import MicroChart from '../components/MicroChart';
 import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
 import StatusBadge from '../components/StatusBadge';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
@@ -12,7 +13,6 @@ import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
 import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
 import type {
-  ChannelChunkData,
   Group,
   GroupMember,
   MacroViewResponse,
@@ -24,93 +24,6 @@ import type {
 // (imported as scientificColor)
 
 // ── Shared Plotly layout base — see buildChartTheme() in lib/chartTheme.ts
-
-// ── Single run micro-chart ────────────────────────────────────────────────────
-interface MicroChartProps {
-  run: RunChunkResponse;
-  visibleChannels: Set<string>;
-  theme: 'dark' | 'light';
-  onInitialized: (runId: string, div: HTMLDivElement) => void;
-  onHover: (xFraction: number) => void;
-  onUnhover: () => void;
-}
-
-function MicroChart({ run, visibleChannels, theme, onInitialized, onHover, onUnhover }: MicroChartProps) {
-  const xMax = run.x.length > 0 ? run.x[run.x.length - 1] : 1;
-  const runOocCount = run.channels[0]
-    ? run.channels[0].states.filter((s) => s === 'OOC').length
-    : run.ooc_count;
-
-  const traces: Plotly.Data[] = run.channels.flatMap((ch: ChannelChunkData, i: number) => {
-    if (!visibleChannels.has(ch.channel_name)) return [];
-    const color = scientificColor(i);
-    const oocX = run.x.filter((_, j) => ch.states[j] === 'OOC');
-    const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
-    return [
-      { x: run.x, y: ch.y, type: 'scattergl', mode: 'lines',
-        name: ch.channel_name, line: { color, width: 1.5 } } as Plotly.Data,
-      ...(oocX.length > 0 ? [{
-        x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-        showlegend: false, marker: OOC_MARKER,
-      } as Plotly.Data] : []),
-    ];
-  });
-
-  const isLight = theme === 'light';
-  const axisColor = isLight ? '#1a1a1a' : '#9ca3af';
-  const gridColor = isLight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
-  const runLabel = `Run ${String(run.run_index + 1).padStart(2, '0')}`;
-  const runTitle = runOocCount > 0 ? `${runLabel} — ${runOocCount} OOC` : runLabel;
-
-  const layout = {
-    ...buildChartTheme(theme),
-    margin: { t: 28, r: 8, l: 44, b: 32 },
-    showlegend: run.channels.length > 1,
-    legend: { font: { size: 9, family: 'Inter, ui-sans-serif, sans-serif' }, bgcolor: 'transparent', x: 1, xanchor: 'right', y: 1 },
-    xaxis: {
-      color: axisColor, gridcolor: gridColor,
-      zerolinecolor: isLight ? '#1a1a1a' : '#6b7280',
-      ticks: 'inside' as const, ticklen: 4, tickcolor: axisColor,
-      tickfont: { size: 9, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
-      linecolor: isLight ? '#1a1a1a' : '#4b5563', linewidth: 1, showline: true,
-      mirror: isLight,
-    },
-    yaxis: {
-      color: axisColor, gridcolor: gridColor,
-      zerolinecolor: isLight ? '#1a1a1a' : '#6b7280',
-      ticks: 'inside' as const, ticklen: 4, tickcolor: axisColor,
-      tickfont: { size: 9, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
-      linecolor: isLight ? '#1a1a1a' : '#4b5563', linewidth: 1, showline: true,
-      mirror: isLight,
-    },
-    title: {
-      text: runTitle,
-      font: {
-        size: 11,
-        family: 'Inter, ui-sans-serif, sans-serif',
-        color: runOocCount > 0 ? '#d62728' : axisColor,
-      },
-      x: 0.04,
-    },
-  };
-
-  const cardBg = isLight ? 'bg-white border border-[#dee2e6]' : 'bg-zinc-900 border border-zinc-800';
-
-  return (
-    <div className={`rounded p-1 ${cardBg}`}>
-      <Plot
-        data={traces}
-        layout={layout as Partial<Plotly.Layout>}
-        useResizeHandler
-        style={{ width: '100%', height: '180px' }}
-        config={{ displayModeBar: false }}
-        onInitialized={(_fig, graphDiv) => onInitialized(run.run_id, graphDiv as HTMLDivElement)}
-        onHover={(e) => { const pt = e.points?.[0]; if (pt) onHover((pt.x as number) / (xMax || 1)); }}
-        onUnhover={onUnhover}
-      />
-    </div>
-  );
-}
 
 // ── Group macro result type ───────────────────────────────────────────────────
 interface GroupMacroResult {
@@ -133,6 +46,7 @@ export default function Dashboard() {
   const [loadingMacro, setLoadingMacro] = useState(false);
   const [macroError, setMacroError] = useState(false);
   const [loadingRuns, setLoadingRuns] = useState(false);
+  const [runError, setRunError] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
   const [visibleChannels, setVisibleChannels] = useState<Set<string>>(new Set());
 
@@ -215,16 +129,36 @@ export default function Dashboard() {
     async (event: Plotly.PlotRelayoutEvent) => {
       if (!macroData || !selectedId) return;
       const ev = event as unknown as Record<string, unknown>;
-      const x0 = ev['xaxis.range[0]'] as number | undefined;
-      const x1 = ev['xaxis.range[1]'] as number | undefined;
+
+      // When a datetime axis is active, Plotly returns ISO strings for range values.
+      // Convert them back to elapsed seconds using t0_epoch_s before comparing
+      // against RunBound.start_x / end_x (which are always elapsed seconds).
+      let x0: number | undefined;
+      let x1: number | undefined;
+      if (macroData.t0_epoch_s != null) {
+        const r0 = ev['xaxis.range[0]'] as string | undefined;
+        const r1 = ev['xaxis.range[1]'] as string | undefined;
+        x0 = r0 ? new Date(r0).getTime() / 1000 - macroData.t0_epoch_s : undefined;
+        x1 = r1 ? new Date(r1).getTime() / 1000 - macroData.t0_epoch_s : undefined;
+      } else {
+        x0 = ev['xaxis.range[0]'] as number | undefined;
+        x1 = ev['xaxis.range[1]'] as number | undefined;
+      }
+
       if (x0 === undefined || x1 === undefined) return;
-      const visible: RunBound[] = macroData.runs.filter((r) => r.start_x < x1 && r.end_x > x0);
+      const visible: RunBound[] = macroData.runs.filter((r) => r.start_x < x1! && r.end_x > x0!);
       if (!visible.length) { setRunChunks([]); return; }
       setLoadingRuns(true);
+      setRunError(false);
       plotDivs.current.clear();
       try {
         setRunChunks(await getRunChunks(selectedId, visible.map((r) => r.run_id)));
-      } finally { setLoadingRuns(false); }
+      } catch {
+        setRunChunks([]);
+        setRunError(true);
+      } finally {
+        setLoadingRuns(false);
+      }
     },
     [macroData, selectedId]
   );
@@ -251,12 +185,15 @@ export default function Dashboard() {
   }, []);
 
   // ── Signal macro traces ────────────────────────────────────────────────────
-  const macroShapes = macroData?.runs.map((r) => ({
-    type: 'rect' as const, xref: 'x' as const, yref: 'paper' as const,
-    x0: r.start_x, x1: r.end_x, y0: 0, y1: 1,
-    fillcolor: r.ooc_count > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.06)',
-    line: { width: 0 }, layer: 'below' as const,
-  })) ?? [];
+  const macroShapes = useMemo(
+    () => macroData?.runs.map((r) => ({
+      type: 'rect' as const, xref: 'x' as const, yref: 'paper' as const,
+      x0: r.start_x, x1: r.end_x, y0: 0, y1: 1,
+      fillcolor: r.ooc_count > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.06)',
+      line: { width: 0 }, layer: 'below' as const,
+    })) ?? [],
+    [macroData?.runs],
+  );
 
   const macroTraces: Plotly.Data[] = macroData
     ? macroData.channels.flatMap((ch, i) => {
@@ -277,9 +214,15 @@ export default function Dashboard() {
 
   // ── Group macro traces (time-aligned, custom colors) ──────────────────────
   // Build a global flat channel list to assign palette indices
-  const allGroupChannelKeys: string[] = [];
-  groupResults.forEach(({ signalId, macro }) =>
-    macro.channels.forEach((ch) => allGroupChannelKeys.push(`${signalId}:${ch.channel_name}`))
+  const allGroupChannelKeys = useMemo(
+    () => {
+      const keys: string[] = [];
+      groupResults.forEach(({ signalId, macro }) =>
+        macro.channels.forEach((ch) => keys.push(`${signalId}:${ch.channel_name}`))
+      );
+      return keys;
+    },
+    [groupResults],
   );
 
   const groupTraces: Plotly.Data[] = groupResults.flatMap(({ signalId, filename, member, macro }) =>
@@ -305,53 +248,61 @@ export default function Dashboard() {
     })
   );
 
-  const isLight = theme === 'light';
-  const axColor = isLight ? '#1a1a1a' : '#9ca3af';
-  const gridColor = isLight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
-  const sliderBg = isLight ? '#f5f5f5' : '#18181b';
-  const sliderBorder = isLight ? '#dee2e6' : '#3f3f46';
+  const macroLayout = useMemo((): Partial<Plotly.Layout> => {
+    const isLightMode = theme === 'light';
+    const axisColor = isLightMode ? '#1a1a1a' : '#9ca3af';
+    const grid = isLightMode ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
+    const slidBg = isLightMode ? '#f5f5f5' : '#18181b';
+    const slidBorder = isLightMode ? '#dee2e6' : '#3f3f46';
+    return {
+      ...buildChartTheme(theme),
+      margin: { t: 8, r: 12, l: 52, b: 60 },
+      showlegend: (macroData?.channels.length ?? 0) > 1,
+      legend: { font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor }, bgcolor: 'transparent', x: 1, xanchor: 'right', y: 1 },
+      shapes: macroShapes as Plotly.Shape[],
+      xaxis: {
+        color: axisColor, gridcolor: grid, zerolinecolor: axisColor,
+        ticks: 'inside', tickcolor: axisColor, linecolor: axisColor, linewidth: 1, showline: true,
+        mirror: isLightMode,
+        tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+        rangeslider: { visible: true, thickness: 0.08, bgcolor: slidBg, bordercolor: slidBorder, borderwidth: 1 },
+      },
+      yaxis: {
+        color: axisColor, gridcolor: grid, zerolinecolor: axisColor,
+        ticks: 'inside', tickcolor: axisColor, linecolor: axisColor, linewidth: 1, showline: true,
+        mirror: isLightMode,
+        tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+      },
+    };
+  }, [theme, macroShapes, macroData?.channels.length]);
 
-  const macroLayout: Partial<Plotly.Layout> = {
-    ...buildChartTheme(theme),
-    margin: { t: 8, r: 12, l: 52, b: 60 },
-    showlegend: (macroData?.channels.length ?? 0) > 1,
-    legend: { font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor }, bgcolor: 'transparent', x: 1, xanchor: 'right', y: 1 },
-    shapes: macroShapes as Plotly.Shape[],
-    xaxis: {
-      color: axColor, gridcolor: gridColor, zerolinecolor: axColor,
-      ticks: 'inside', tickcolor: axColor, linecolor: axColor, linewidth: 1, showline: true,
-      mirror: isLight,
-      tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor },
-      rangeslider: { visible: true, thickness: 0.08, bgcolor: sliderBg, bordercolor: sliderBorder, borderwidth: 1 },
-    },
-    yaxis: {
-      color: axColor, gridcolor: gridColor, zerolinecolor: axColor,
-      ticks: 'inside', tickcolor: axColor, linecolor: axColor, linewidth: 1, showline: true,
-      mirror: isLight,
-      tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor },
-    },
-  };
-
-  const groupLayout: Partial<Plotly.Layout> = {
-    ...buildChartTheme(theme),
-    margin: { t: 8, r: 12, l: 52, b: 60 },
-    showlegend: true,
-    legend: { font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor }, bgcolor: isLight ? '#ffffff' : '#18181b', bordercolor: sliderBorder, borderwidth: 1 },
-    xaxis: {
-      color: axColor, gridcolor: gridColor, zerolinecolor: axColor,
-      ticks: 'inside', tickcolor: axColor, linecolor: axColor, linewidth: 1, showline: true,
-      mirror: isLight,
-      tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor },
-      title: { text: 'Time (s, offset applied)', font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor } },
-      rangeslider: { visible: true, thickness: 0.08, bgcolor: sliderBg, bordercolor: sliderBorder, borderwidth: 1 },
-    },
-    yaxis: {
-      color: axColor, gridcolor: gridColor, zerolinecolor: axColor,
-      ticks: 'inside', tickcolor: axColor, linecolor: axColor, linewidth: 1, showline: true,
-      mirror: isLight,
-      tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axColor },
-    },
-  };
+  const groupLayout = useMemo((): Partial<Plotly.Layout> => {
+    const isLightMode = theme === 'light';
+    const axisColor = isLightMode ? '#1a1a1a' : '#9ca3af';
+    const grid = isLightMode ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
+    const slidBg = isLightMode ? '#f5f5f5' : '#18181b';
+    const slidBorder = isLightMode ? '#dee2e6' : '#3f3f46';
+    return {
+      ...buildChartTheme(theme),
+      margin: { t: 8, r: 12, l: 52, b: 60 },
+      showlegend: true,
+      legend: { font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor }, bgcolor: isLightMode ? '#ffffff' : '#18181b', bordercolor: slidBorder, borderwidth: 1 },
+      xaxis: {
+        color: axisColor, gridcolor: grid, zerolinecolor: axisColor,
+        ticks: 'inside', tickcolor: axisColor, linecolor: axisColor, linewidth: 1, showline: true,
+        mirror: isLightMode,
+        tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+        title: { text: 'Time (s, offset applied)', font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor } },
+        rangeslider: { visible: true, thickness: 0.08, bgcolor: slidBg, bordercolor: slidBorder, borderwidth: 1 },
+      },
+      yaxis: {
+        color: axisColor, gridcolor: grid, zerolinecolor: axisColor,
+        ticks: 'inside', tickcolor: axisColor, linecolor: axisColor, linewidth: 1, showline: true,
+        mirror: isLightMode,
+        tickfont: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+      },
+    };
+  }, [theme]);
 
   const selectedSignal = signals.find((s) => s.id === selectedId);
   const selectedGroup = groups.find((g) => g.id === selectedGroupId);
@@ -667,6 +618,12 @@ export default function Dashboard() {
       {viewMode === 'signal' && loadingRuns && (
         <div className="flex items-center justify-center py-6 font-sans text-xs" style={{ color: 'var(--sp-text-tertiary)' }}>
           <Activity size={13} className="animate-spin mr-2" /> Loading run data…
+        </div>
+      )}
+
+      {viewMode === 'signal' && runError && !loadingRuns && (
+        <div className="flex items-center justify-center py-4 font-sans text-xs text-red-400">
+          ⚠ Could not load run data — drag the range slider again to retry.
         </div>
       )}
 

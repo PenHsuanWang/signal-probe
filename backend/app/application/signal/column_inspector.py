@@ -16,6 +16,10 @@ import re
 
 import polars as pl
 
+from app.domain.signal.format_constants import (
+    STACKED_COL_ALIASES,
+    STACKED_REQUIRED_COLS,
+)
 from app.domain.signal.schemas import ColumnDescriptor
 
 # Maximum rows sampled for type inference and sample-value extraction.
@@ -28,15 +32,9 @@ _TIME_NAME_RE = re.compile(
     r"\b(time|timestamp|ts|datetime|date|epoch|t)\b", re.IGNORECASE
 )
 
-# Required columns (lower-cased) that identify a long/stacked-format CSV.
-_STACKED_REQUIRED_COLS = frozenset({"datetime", "signal_name", "signal_value"})
-
-# Maps lower-cased non-standard column names → canonical stacked-format names.
-# Keep in sync with pipeline._STACKED_COL_ALIASES.
-_STACKED_COL_ALIASES: dict[str, str] = {
-    "measurement_datetime": "datetime",
-    "measurement_value": "signal_value",
-}
+# Bind module-private aliases from the shared constants.
+_STACKED_REQUIRED_COLS = STACKED_REQUIRED_COLS
+_STACKED_COL_ALIASES = STACKED_COL_ALIASES
 
 
 class ColumnInspector:
