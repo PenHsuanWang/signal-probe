@@ -325,7 +325,6 @@ class SignalService:
                 run_index=r.run_index,
                 start_x=r.start_x,
                 end_x=r.end_x,
-                ooc_count=r.ooc_count,
             )
             for r in sorted(signal.runs, key=lambda r: r.run_index)
         ]
@@ -387,7 +386,6 @@ class SignalService:
                     value_min=seg.value_min,
                     value_mean=seg.value_mean,
                     value_variance=seg.value_variance,
-                    ooc_count=seg.ooc_count,
                     x=cx,
                     channels=channel_chunks,
                 )

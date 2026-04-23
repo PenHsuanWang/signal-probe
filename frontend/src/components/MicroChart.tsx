@@ -1,5 +1,5 @@
 import { Plot } from '../lib/plot';
-import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
+import { buildChartTheme, scientificColor } from '../lib/chartTheme';
 import type { ChannelChunkData, RunChunkResponse } from '../types/signal';
 
 interface MicroChartProps {
@@ -13,22 +13,13 @@ interface MicroChartProps {
 
 export default function MicroChart({ run, visibleChannels, theme, onInitialized, onHover, onUnhover }: MicroChartProps) {
   const xMax = run.x.length > 0 ? run.x[run.x.length - 1] : 1;
-  const runOocCount = run.channels[0]
-    ? run.channels[0].states.filter((s) => s === 'OOC').length
-    : run.ooc_count;
 
   const traces: Plotly.Data[] = run.channels.flatMap((ch: ChannelChunkData, i: number) => {
     if (!visibleChannels.has(ch.channel_name)) return [];
     const color = scientificColor(i);
-    const oocX = run.x.filter((_, j) => ch.states[j] === 'OOC');
-    const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
     return [
       { x: run.x, y: ch.y, type: 'scattergl', mode: 'lines',
         name: ch.channel_name, line: { color, width: 1.5 } } as Plotly.Data,
-      ...(oocX.length > 0 ? [{
-        x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-        showlegend: false, marker: OOC_MARKER,
-      } as Plotly.Data] : []),
     ];
   });
 
@@ -36,7 +27,7 @@ export default function MicroChart({ run, visibleChannels, theme, onInitialized,
   const axisColor = isLight ? '#1a1a1a' : '#9ca3af';
   const gridColor = isLight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.05)';
   const runLabel = `Run ${String(run.run_index + 1).padStart(2, '0')}`;
-  const runTitle = runOocCount > 0 ? `${runLabel} — ${runOocCount} OOC` : runLabel;
+  const runTitle = runLabel;
 
   const layout = {
     ...buildChartTheme(theme),
@@ -64,7 +55,7 @@ export default function MicroChart({ run, visibleChannels, theme, onInitialized,
       font: {
         size: 11,
         family: 'Inter, ui-sans-serif, sans-serif',
-        color: runOocCount > 0 ? '#d62728' : axisColor,
+        color: axisColor,
       },
       x: 0.04,
     },

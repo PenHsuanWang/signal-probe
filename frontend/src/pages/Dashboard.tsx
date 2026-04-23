@@ -11,7 +11,7 @@ import StatusBadge from '../components/StatusBadge';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
-import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
+import { buildChartTheme, scientificColor } from '../lib/chartTheme';
 import type {
   Group,
   GroupMember,
@@ -189,7 +189,7 @@ export default function Dashboard() {
     () => macroData?.runs.map((r) => ({
       type: 'rect' as const, xref: 'x' as const, yref: 'paper' as const,
       x0: r.start_x, x1: r.end_x, y0: 0, y1: 1,
-      fillcolor: r.ooc_count > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.06)',
+      fillcolor: 'rgba(34,197,94,0.06)',
       line: { width: 0 }, layer: 'below' as const,
     })) ?? [],
     [macroData?.runs],
@@ -199,15 +199,9 @@ export default function Dashboard() {
     ? macroData.channels.flatMap((ch, i) => {
         if (!visibleChannels.has(ch.channel_name)) return [];
         const color = scientificColor(i);
-        const oocX = macroData.x.filter((_, j) => ch.states[j] === 'OOC');
-        const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
         return [
           { x: macroData.x, y: ch.y, type: 'scattergl', mode: 'lines',
             name: ch.channel_name, line: { color, width: 1 } } as Plotly.Data,
-          ...(oocX.length > 0 ? [{
-            x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-            showlegend: false, marker: OOC_MARKER,
-          } as Plotly.Data] : []),
         ];
       })
     : [];
@@ -233,17 +227,10 @@ export default function Dashboard() {
       const palIdx = allGroupChannelKeys.indexOf(key);
       const color = member.channel_colors?.[ch.channel_name] ?? scientificColor(palIdx);
       const offsetX = macro.x.map((v) => v + (member.time_offset_s ?? 0));
-      const oocX = offsetX.filter((_, j) => ch.states[j] === 'OOC');
-      const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
       const label = macro.channels.length > 1 ? `${filename}·${ch.channel_name}` : filename;
-
       return [
         { x: offsetX, y: ch.y, type: 'scattergl', mode: 'lines',
           name: label, line: { color, width: 1.5 } } as Plotly.Data,
-        ...(oocX.length > 0 ? [{
-          x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-          showlegend: false, marker: OOC_MARKER,
-        } as Plotly.Data] : []),
       ];
     })
   );
@@ -377,7 +364,7 @@ export default function Dashboard() {
                       <span className="truncate max-w-[55%]">{s.original_filename}</span>
                       <div className="flex items-center space-x-3 flex-shrink-0">
                         {s.status === 'COMPLETED' && (
-                          <span className="text-zinc-600">{s.active_run_count}r · {s.ooc_count} OOC</span>
+                          <span className="text-zinc-600">{s.active_run_count}r</span>
                         )}
                         <StatusBadge status={s.status} variant="inline" />
                       </div>
@@ -460,9 +447,6 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 ml-2 text-xs font-mono text-zinc-500">
                   <span className="flex items-center gap-1">
                     <span className="w-3 h-2 rounded-sm inline-block bg-green-500/25 border border-green-500/40" />ACTIVE
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 h-2 rounded-sm inline-block bg-red-500/20 border border-red-500/40" />OOC
                   </span>
                 </div>
               </div>
@@ -599,8 +583,7 @@ export default function Dashboard() {
           <div className="mb-3">
             <h2 className="text-xs font-semibold font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Run Grid</h2>
             <p className="text-xs font-sans mt-0.5" style={{ color: 'var(--sp-text-tertiary)' }}>
-              {runChunks.length} run{runChunks.length !== 1 ? 's' : ''} · hover to sync crosshairs ·
-              <span className="text-red-500"> OOC anomalies highlighted</span>
+              {runChunks.length} run{runChunks.length !== 1 ? 's' : ''} · hover to sync crosshairs
             </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">

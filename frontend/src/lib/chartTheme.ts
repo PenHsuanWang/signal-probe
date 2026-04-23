@@ -20,14 +20,6 @@ export const SCIENTIFIC_PALETTE: string[] = [
 export const scientificColor = (i: number): string =>
   SCIENTIFIC_PALETTE[i % SCIENTIFIC_PALETTE.length];
 
-/** OOC marker style — open circle for grayscale/colorblind distinction. */
-export const OOC_MARKER = {
-  symbol: 'circle-open' as const,
-  size: 8,
-  color: '#d62728',
-  line: { width: 2, color: '#d62728' },
-};
-
 // ── Shared axis config ────────────────────────────────────────────────────────
 
 const LIGHT_AXIS = {
