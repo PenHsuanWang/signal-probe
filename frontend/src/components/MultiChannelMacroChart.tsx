@@ -175,7 +175,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
       },
     };
 
-    channels.forEach((_, i) => {
+    channels.forEach((ch, i) => {
       const axKey = i === 0 ? 'yaxis' : `yaxis${i + 1}`;
       l[axKey] = {
         domain: domains[i],
@@ -193,7 +193,10 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
         linewidth: 1,
         showline: true,
         mirror: true,
-        title: { text: '' },
+        title: {
+          text: macro.channel_units?.[ch.channel_name] ?? '',
+          font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
+        },
       };
     });
 

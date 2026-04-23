@@ -52,6 +52,17 @@ export interface ProcessSignalRequest {
   signal_columns?: string[];
   /** Signal names to include from a stacked CSV (null/omit = all channels). */
   stacked_channel_filter?: string[] | null;
+  /**
+   * Explicit datetime column name override (stacked format).
+   * When omitted the backend falls back to alias detection.
+   */
+  datetime_column?: string;
+  /**
+   * Column whose values contain the physical unit string for each row
+   * (e.g. "mV", "°C"). Present in both wide and stacked formats.
+   * When omitted no unit labels are attached to the y-axis.
+   */
+  unit_column?: string;
 }
 
 export interface RunBound {
@@ -81,6 +92,11 @@ export interface MacroViewResponse {
    * Reconstruct absolute datetime for index i as: new Date((t0_epoch_s + x[i]) * 1000)
    */
   t0_epoch_s: number | null;
+  /**
+   * Physical unit string per channel (e.g. { "voltage": "mV", "temp": "°C" }).
+   * Present when a unit column was selected during processing; omitted otherwise.
+   */
+  channel_units?: Record<string, string>;
 }
 
 export interface ChannelChunkData {

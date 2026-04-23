@@ -104,6 +104,14 @@ class ProcessSignalRequest(BaseModel):
     stacked_channel_filter: list[str] | None = None
     # Subset of signal names to include from a stacked CSV (None = all channels).
 
+    # Explicit datetime column for the x-axis (stacked format).
+    # When omitted the pipeline falls back to alias-based column detection.
+    datetime_column: str | None = Field(None, min_length=1, max_length=255)
+
+    # Optional column containing physical unit strings (e.g. "mV", "°C").
+    # Applies to both wide and stacked formats; None means no unit labels.
+    unit_column: str | None = Field(None, min_length=1, max_length=255)
+
     @model_validator(mode="after")
     def _validate_format_fields(self) -> "ProcessSignalRequest":
         if self.csv_format == "wide":
@@ -113,6 +121,10 @@ class ProcessSignalRequest(BaseModel):
                 raise ValueError("signal_columns is required for wide format")
             if any(not s.strip() for s in self.signal_columns):
                 raise ValueError("signal_columns must not contain empty strings")
+            if self.unit_column and self.unit_column == self.time_column:
+                raise ValueError("unit_column cannot be the same as time_column")
+            if self.unit_column and self.unit_column in self.signal_columns:
+                raise ValueError("unit_column cannot appear in signal_columns")
         elif self.csv_format == "stacked":
             if self.stacked_channel_filter is not None:
                 if not self.stacked_channel_filter:
@@ -155,6 +167,10 @@ class MacroViewResponse(BaseModel):
     # Unix epoch of the first timestamp (seconds).  Set when the time column
     # is temporal; None for purely numeric time axes.  Allows the frontend to
     # reconstruct absolute datetime labels as: datetime(t0_epoch_s + x[i]).
+    channel_units: dict[str, str] = Field(default_factory=dict)
+    # Maps channel name → physical unit string (e.g. {"pressure": "psig"}).
+    # Present only when the user mapped a unit column during processing;
+    # omitted channels should be treated as unitless.
 
 
 # ── Run chunk ──────────────────────────────────────────────────────────────────

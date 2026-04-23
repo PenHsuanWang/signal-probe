@@ -102,7 +102,11 @@
 +---------------------------------------------------------------------------------------+
 ```
 
-### 4.1 Frontend Components
+- **Column-Config UI (`ColumnConfigPanel`, `useColumnConfig` hook):**
+  - Wide format: `TimeColumnSelector` (radio group) + `SignalColumnSelector` (checkbox group) + optional `UnitColumnSelector`.
+  - Stacked format: `DatetimeColumnSelector` (radio group, temporal columns only, auto-selects best candidate) + `StackedChannelPicker` (checkbox group) + optional `UnitColumnSelector`.
+  - `UnitColumnSelector` is a radio group offering `(none)` plus any string-dtype columns not already assigned to time/signal roles. It is hidden when no eligible columns exist.
+  - State is managed by `useReducer` inside `useColumnConfig`. `canSubmit` for stacked format additionally requires `datetimeCol !== null`.
 
 - **UI & State:** React components manage layout, forms, and tools. `AuthContext` handles global JWT state via React Context API.
 - **Visualization Engine (Plotly.js):**
@@ -148,16 +152,17 @@ Signal processing uses a **two-step upload flow**:
 1. Engineer uploads a CSV/Parquet file → `POST /api/v1/signals/upload` (multipart/form-data).
 2. `StorageAdapter` streams the file to Blob Storage. A `signal_metadata` record is created with `status = AWAITING_CONFIG`.
 3. Frontend fetches `GET /api/v1/signals/{id}/raw-columns` to preview column names, dtypes, and sample values without running the full pipeline.
-4. User selects a time column and one or more signal columns (and optionally the CSV format `wide` | `stacked`).
+4. User selects a time column and one or more signal columns (and optionally the CSV format `wide` | `stacked`). For stacked format the user also selects the **datetime axis column** (auto-populated from the first temporal candidate). The user may optionally select a **unit column** (any string-dtype column whose values contain physical unit strings such as `"mV"` or `"°C"`).
 
 **Step 2 — Process**
-5. Frontend posts `POST /api/v1/signals/{id}/process` with `{csv_format, time_column, signal_columns}`. Status transitions to `PROCESSING`.
+5. Frontend posts `POST /api/v1/signals/{id}/process` with `{csv_format, time_column, signal_columns, datetime_column?, unit_column?}`. Status transitions to `PROCESSING`.
 6. `SignalService` triggers `run_pipeline` as a FastAPI `BackgroundTask`.
 7. **Domain Processing:**
    - `ColumnInspector` validates the selected columns and detects the CSV format (wide vs. stacked). Shared format constants (`STACKED_REQUIRED_COLS`, `STACKED_COL_ALIASES`) live in `domain/signal/format_constants.py`.
    - `RollingVarianceClassifier` tags every timestamp as `IDLE`, `ACTIVE`, or `OOC`.
    - `ActiveRunSegmenter` groups continuous `ACTIVE` blocks into `RunSegment` records with unique `run_id`s.
    - Aggregate features (duration, max, min, variance, OOC count) are computed per run.
+   - If `unit_column` was supplied, `_extract_channel_units` derives a per-channel unit string (mode of the column's values for that channel). Each unit is written as a constant `__unit_<channel_name>` column in the processed Parquet file. `channel_units` is **not** stored in SQL — it lives exclusively in Parquet (see ADR-008).
    - If the time column is a temporal datetime type, the Unix epoch seconds of the first sample (`t0_epoch_s`) is stored as a constant column in the processed Parquet.
 8. Run metadata is persisted to the `run_segments` table; processed chunks are written back to Blob Storage. Signal status is updated to `COMPLETED`. All `status` transitions explicitly set `updated_at = func.now()` via Core SQL to bypass SQLAlchemy ORM `onupdate` limitations.
 
@@ -166,7 +171,7 @@ Signal processing uses a **two-step upload flow**:
 1. Dashboard loads → `GET /api/v1/signals/{id}/macro` fetches the global view at **full resolution** (all original data points).
 2. The response includes `t0_epoch_s` (Unix epoch of first sample, or `null` for numeric time axes). When set, the frontend converts each elapsed-second x-value to an ISO date string before passing to Plotly.
 3. Plotly renders the Macro Timeline with `ACTIVE`/`OOC` background shapes.
-   - Multi-channel signals use `MultiChannelMacroChart`: stacked horizontal subpanels, one per channel, sharing a single x-axis.
+   - Multi-channel signals use `MultiChannelMacroChart`: stacked horizontal subpanels, one per channel, sharing a single x-axis. When `channel_units` is present in the macro response, each panel's y-axis title is set to the corresponding physical unit string (e.g. `"mV"`, `"°C"`).
    - Single-channel signals use a flat Plotly chart with a range slider.
 4. User drags the brush tool → the `onRelayout` event fires. If a datetime axis is active, the ISO string range values are converted back to elapsed seconds using `t0_epoch_s` before comparing against `RunBound.start_x/end_x`.
 5. `GET /api/v1/signals/{id}/runs?run_ids=1,2,...10` fetches full-resolution chunk data for selected runs.
@@ -213,8 +218,16 @@ All error responses use a standard envelope:
 
 ### Process Request
 ```json
-{ "csv_format": "wide", "time_column": "time", "signal_columns": ["ch1", "ch2"] }
+{
+  "csv_format": "wide",
+  "time_column": "time",
+  "signal_columns": ["ch1", "ch2"],
+  "datetime_column": "measurement_datetime",
+  "unit_column": "unit"
+}
 ```
+- `datetime_column` — optional; overrides alias detection for the stacked datetime axis column. Omit to use automatic alias resolution.
+- `unit_column` — optional; a string-dtype CSV column whose values contain physical unit strings (e.g. `"mV"`). Supported by both `wide` and `stacked` formats.
 
 ### Macro View Response (`200 OK`)
 ```json
@@ -225,10 +238,12 @@ All error responses use a standard envelope:
     { "channel_name": "ch1", "y": [0.12, 0.87, "..."], "states": ["ACTIVE", "OOC", "..."] }
   ],
   "runs": [{ "run_id": "uuid", "run_index": 1, "start_x": 0.0, "end_x": 142.5, "ooc_count": 2 }],
-  "t0_epoch_s": 1700000000.0
+  "t0_epoch_s": 1700000000.0,
+  "channel_units": { "ch1": "mV", "ch2": "°C" }
 }
 ```
-`t0_epoch_s` is `null` for numeric (non-datetime) time columns. When set, reconstruct absolute datetime for index `i` as: `new Date((t0_epoch_s + x[i]) * 1000)`.
+- `t0_epoch_s` is `null` for numeric (non-datetime) time columns. When set, reconstruct absolute datetime for index `i` as: `new Date((t0_epoch_s + x[i]) * 1000)`.
+- `channel_units` is omitted when no `unit_column` was selected during processing. When present, each key is a channel name and the value is its physical unit string. The `MultiChannelMacroChart` uses this to set per-panel y-axis titles.
 
 ### Run Chunk Response (`200 OK`)
 ```json
@@ -328,6 +343,15 @@ CREATE TABLE run_segments (
 - **Decision:** All API error responses are wrapped in `{"error": {"code": "…", "message": "…", "timestamp": "…"}}` via a global `HTTPException` handler in `main.py`.
 - **Rationale:** Ensures the frontend always has a predictable error shape to parse. Avoids each endpoint implementing its own error format. Domain exceptions (`NotFoundException`) are plain Python exceptions — not `HTTPException` — and are mapped to HTTP status codes at the presentation layer only, preserving Clean Architecture boundaries.
 
+### ADR-008 — Channel Units Stored in Parquet, Not SQL
+- **Decision:** Physical unit strings per channel are written as constant `__unit_<channel_name>` columns in the processed Parquet file. They are **not** stored in a SQL column on `signal_metadata`.
+- **Rationale:** Units are a pipeline artifact derived at processing time. Storing them in Parquet requires zero schema migration; adding a JSONB column to SQL would require an Alembic migration for every future attribute of this kind. Units are read lazily at `GET /macro` time by scanning `__unit_*` prefixed columns — a single Polars column read that adds negligible overhead.
+- **Trade-off:** Units are not queryable from SQL. Acceptable because no business logic depends on filtering or aggregating by unit.
+
+### ADR-009 — datetime_column Optional for Backward Compatibility
+- **Decision:** `datetime_column` in `ProcessSignalRequest` is optional (`str | None`, default `None`). When omitted, the pipeline falls back to existing `STACKED_COL_ALIASES` detection.
+- **Rationale:** Existing API clients that do not send `datetime_column` continue to work unchanged. The frontend always sends the user-selected value, but old integrations and test suites remain unaffected. This preserves backward compatibility without a versioned endpoint.
+
 ---
 
 ## 9. Known Issues & Implementation Status
@@ -394,6 +418,10 @@ CREATE TABLE run_segments (
 | Datetime x-axis with ISO date formatting | ✅ Implemented |
 | Small Multiples grid (`MicroChart`) + synchronized crosshairs | ✅ Implemented |
 | Auto-polling for PENDING/PROCESSING signals | ✅ Implemented |
+| **Datetime axis column selector** (stacked format, `DatetimeColumnSelector`) | ✅ Implemented |
+| **Unit column selector** (optional, both formats, `UnitColumnSelector`) | ✅ Implemented |
+| **Per-channel y-axis unit labels** (`channel_units` → `MultiChannelMacroChart`) | ✅ Implemented |
+| `_extract_channel_units` + `__unit_<ch>` Parquet columns | ✅ Implemented |
 
 ---
 

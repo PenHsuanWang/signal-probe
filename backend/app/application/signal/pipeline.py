@@ -40,6 +40,9 @@ from app.infrastructure.storage.interface import IStorageAdapter
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters stored per unit string (guards against XSS via Plotly titles).
+_UNIT_MAX_LEN = 32
+
 # ── Format detection ──────────────────────────────────────────────────────────
 
 # Canonical constants live in format_constants; bind local aliases for brevity.
@@ -74,6 +77,72 @@ def _is_stacked_format(df: pl.DataFrame) -> bool:
     return _STACKED_REQUIRED_COLS.issubset(normalised)
 
 
+def _extract_channel_units(
+    df: pl.DataFrame,
+    unit_col: str,
+    channels: dict[str, list],
+    csv_format: str,
+) -> dict[str, str]:
+    """Extract per-channel physical unit strings from *unit_col*.
+
+    For **wide** format the unit column contains one value per row (all channels
+    typically share the same unit).  The statistical mode of non-null values is
+    computed and applied to every channel.
+
+    For **stacked** format the raw pre-pivot DataFrame still has a
+    ``signal_name`` column.  We group by ``signal_name`` and take the first
+    non-null unit value per channel.
+
+    Column names are normalised (lower-case + alias resolution) before lookup so
+    that variant names such as ``Unit`` or ``UNIT`` are found reliably.
+
+    Unit strings are truncated to :data:`_UNIT_MAX_LEN` characters.
+
+    Args:
+        df: Raw (pre-pivot) DataFrame containing *unit_col* and, for stacked
+            format, a ``signal_name`` column.
+        unit_col: Name of the column holding unit strings (user-supplied,
+            original casing).
+        channels: ``{channel_name: values}`` dict returned by the reader; used
+            to restrict the result to channels that were actually processed.
+        csv_format: ``"stacked"`` or ``"wide"`` (any non-stacked value is
+            treated as wide).
+
+    Returns:
+        ``{channel_name: unit_string}`` for every processed channel that has a
+        non-null unit entry.  Empty dict when *unit_col* is absent or all values
+        are null.
+    """
+    norm_df = _normalize_stacked_columns(df)
+    norm_unit = _STACKED_COL_ALIASES.get(unit_col.lower(), unit_col.lower())
+    if norm_unit not in norm_df.columns:
+        return {}
+
+    result: dict[str, str] = {}
+    if csv_format == "stacked":
+        if "signal_name" not in norm_df.columns:
+            return {}
+        unit_per_channel = (
+            norm_df.filter(pl.col(norm_unit).is_not_null())
+            .group_by("signal_name")
+            .agg(pl.col(norm_unit).first().alias("unit"))
+        )
+        for row in unit_per_channel.iter_rows(named=True):
+            ch_name = row["signal_name"]
+            if ch_name in channels:
+                result[ch_name] = str(row["unit"])[:_UNIT_MAX_LEN]
+    else:
+        non_null = norm_df[norm_unit].drop_nulls()
+        if non_null.is_empty():
+            return {}
+        mode_val = non_null.mode()[0]
+        unit_str = str(mode_val)[:_UNIT_MAX_LEN]
+        for ch_name in channels:
+            result[ch_name] = unit_str
+
+    return result
+
+
 # ── Raw file loader ───────────────────────────────────────────────────────────
 
 
@@ -91,18 +160,22 @@ def _load_raw_dataframe(raw_path: str) -> pl.DataFrame:
 def _read_stacked_signal_file(
     df: pl.DataFrame,
     channel_filter: list[str] | None = None,
+    datetime_col: str | None = None,
 ) -> tuple[list[float], dict[str, list[float | None]], float]:
     """Parse a long/stacked CSV into (timestamps_s, channels, t0_epoch_s).
 
     Steps
     -----
-    1. Normalise column names to lower-case.
-    2. Cast ``signal_value`` to Float64; drop rows with null in key columns.
-    3. Pivot on ``signal_name`` → wide DataFrame (outer-join semantics;
+    1. If *datetime_col* is provided, rename it to the canonical ``datetime``
+       name before any further processing so user-selected column names (e.g.
+       ``ts_utc``, ``event_time``) are handled transparently.
+    2. Normalise column names to lower-case.
+    3. Cast ``signal_value`` to Float64; drop rows with null in key columns.
+    4. Pivot on ``signal_name`` → wide DataFrame (outer-join semantics;
        missing positions become ``null``).
-    4. Sort by ``datetime`` and compute elapsed seconds from the first timestamp.
-    5. Apply *channel_filter* if provided (keep only the requested channels).
-    6. Return ``(timestamps_s, {signal_name: [float | None, ...]}, t0_epoch_s)``
+    5. Sort by ``datetime`` and compute elapsed seconds from the first timestamp.
+    6. Apply *channel_filter* if provided (keep only the requested channels).
+    7. Return ``(timestamps_s, {signal_name: [float | None, ...]}, t0_epoch_s)``
        where ``None`` marks timestamps absent for a given channel and
        ``t0_epoch_s`` is the Unix epoch of the first timestamp (seconds).
 
@@ -111,6 +184,10 @@ def _read_stacked_signal_file(
         channel_filter: Optional list of signal names to include.  When
             ``None`` (default) all channels are included.  Names not present
             in the file are silently ignored after pivoting.
+        datetime_col: Optional user-selected column name to use as the datetime
+            axis.  When provided, the column is renamed to ``datetime`` before
+            the canonical normalization step.  When ``None`` (default), the
+            existing alias-based detection is used.
 
     Returns:
         timestamps_s: Elapsed-seconds list starting at 0.0.
@@ -121,6 +198,15 @@ def _read_stacked_signal_file(
     Raises:
         ValueError: If the DataFrame is empty after cleaning or has no channels.
     """
+    # If the user explicitly selects a datetime column, rename it to the
+    # canonical name so that downstream normalization and pivot logic work
+    # without modification.  Match original casing first, then lower-case.
+    if datetime_col is not None and datetime_col != "datetime":
+        if datetime_col in df.columns:
+            df = df.rename({datetime_col: "datetime"})
+        elif datetime_col.lower() in df.columns and datetime_col.lower() != "datetime":
+            df = df.rename({datetime_col.lower(): "datetime"})
+
     # Normalise column names: lower-case + resolve known aliases
     # (e.g. measurement_datetime → datetime, measurement_value → signal_value)
     df = _normalize_stacked_columns(df)
@@ -389,6 +475,8 @@ async def run_pipeline(
     time_column: str | None = None,
     signal_columns: list[str] | None = None,
     stacked_channel_filter: list[str] | None = None,
+    datetime_column: str | None = None,
+    unit_column: str | None = None,
 ) -> None:
     """Entry point called by BackgroundTasks.
 
@@ -396,11 +484,16 @@ async def run_pipeline(
     -------------
     * ``csv_format="stacked"``: Use the stacked/long-format reader with an
       optional *stacked_channel_filter* to select a subset of channels.
+      *datetime_column* overrides alias-based datetime detection.
     * ``csv_format="wide"`` with *time_column* and *signal_columns* provided:
       Use the explicit user-configured wide-format reader (EPIC-FLX).
     * ``csv_format="auto"`` (default, internal use only): Fall back to the
       auto-detecting reader for backward compatibility (ADR-008).  This value
       is intentionally not exposed through the public API schemas.
+
+    When *unit_column* is provided, per-channel unit strings are extracted from
+    the raw file and stored as ``__unit_<channel_name>`` constant columns in the
+    processed Parquet so that ``get_macro_view`` can surface them to the client.
     """
     async with session_factory() as session:
         repo = SignalRepository(session)
@@ -408,15 +501,26 @@ async def run_pipeline(
         await repo.update_signal_processing(signal_id, ProcessingStatus.PROCESSING)
 
         try:
+            channel_units: dict[str, str] = {}
+
             if csv_format == "stacked":
                 df = _load_raw_dataframe(raw_file_path)
                 timestamps, channels, t0_epoch_s = _read_stacked_signal_file(
-                    df, stacked_channel_filter
+                    df, stacked_channel_filter, datetime_column
                 )
+                if unit_column:
+                    channel_units = _extract_channel_units(
+                        df, unit_column, channels, "stacked"
+                    )
             elif time_column and signal_columns:
                 timestamps, channels, t0_epoch_s = _read_with_config(
                     raw_file_path, time_column, signal_columns
                 )
+                if unit_column:
+                    raw_df = _load_raw_dataframe(raw_file_path)
+                    channel_units = _extract_channel_units(
+                        raw_df, unit_column, channels, "wide"
+                    )
             else:
                 timestamps, channels, t0_epoch_s = _read_signal_file(raw_file_path)
             channel_names = list(channels.keys())
@@ -438,6 +542,11 @@ async def run_pipeline(
                     data[f"{ch_name}_state"] = primary_states
                 else:
                     data[f"{ch_name}_state"] = classifier.classify(ch_vals)
+
+            # Store per-channel unit strings as constant columns so that
+            # get_macro_view can surface them without re-reading the raw file.
+            for ch_name, unit_str in channel_units.items():
+                data[f"__unit_{ch_name}"] = [unit_str] * len(timestamps)
 
             processed_df = pl.DataFrame(data)
             buf = io.BytesIO()

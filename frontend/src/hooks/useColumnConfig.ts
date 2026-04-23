@@ -21,6 +21,10 @@ interface ColumnConfigState {
   timeCol: string | null;
   /** User-selected signal channel column names (wide format). */
   sigCols: Set<string>;
+  /** User-selected datetime axis column (stacked format x-axis). */
+  datetimeCol: string | null;
+  /** Optional column whose values are physical unit strings (both formats). */
+  unitCol: string | null;
   /** Error from the column inspection fetch. */
   fetchError: string | null;
   /** Error from the process submission. */
@@ -35,6 +39,8 @@ type Action =
   | { type: 'TOGGLE_SIG_COL'; payload: string }
   | { type: 'TOGGLE_STACKED_CHANNEL'; payload: string }
   | { type: 'SELECT_ALL_STACKED_CHANNELS' }
+  | { type: 'SET_DATETIME_COL'; payload: string }
+  | { type: 'SET_UNIT_COL'; payload: string | null }
   | { type: 'SUBMIT_START' }
   | { type: 'SUBMIT_SUCCESS' }
   | { type: 'SUBMIT_ERROR'; payload: string };
@@ -46,7 +52,11 @@ function reducer(state: ColumnConfigState, action: Action): ColumnConfigState {
     case 'FETCH_SUCCESS': {
       const { csv_format, stacked_signal_names, columns } = action.payload;
       if (csv_format === 'stacked') {
-        // Auto-select all stacked channels by default.
+        // Auto-select the best temporal candidate as the datetime axis column.
+        const candidateDatetime =
+          columns.find((c) => c.is_candidate_time && c.dtype === 'temporal') ??
+          columns.find((c) => c.dtype === 'temporal') ??
+          null;
         return {
           ...state,
           status: 'ready',
@@ -56,6 +66,8 @@ function reducer(state: ColumnConfigState, action: Action): ColumnConfigState {
           selectedStackedChannels: new Set(stacked_signal_names),
           timeCol: null,
           sigCols: new Set(),
+          datetimeCol: candidateDatetime?.name ?? null,
+          unitCol: null,
           fetchError: null,
         };
       }
@@ -73,6 +85,8 @@ function reducer(state: ColumnConfigState, action: Action): ColumnConfigState {
         selectedStackedChannels: new Set(),
         timeCol: candidateTime?.name ?? null,
         sigCols: new Set(numericSigs),
+        datetimeCol: null,
+        unitCol: null,
         fetchError: null,
       };
     }
@@ -97,6 +111,10 @@ function reducer(state: ColumnConfigState, action: Action): ColumnConfigState {
         ...state,
         selectedStackedChannels: new Set(state.stackedSignalNames),
       };
+    case 'SET_DATETIME_COL':
+      return { ...state, datetimeCol: action.payload };
+    case 'SET_UNIT_COL':
+      return { ...state, unitCol: action.payload };
     case 'SUBMIT_START':
       return { ...state, status: 'submitting', submitError: null };
     case 'SUBMIT_SUCCESS':
@@ -116,6 +134,8 @@ const INITIAL_STATE: ColumnConfigState = {
   selectedStackedChannels: new Set(),
   timeCol: null,
   sigCols: new Set(),
+  datetimeCol: null,
+  unitCol: null,
   fetchError: null,
   submitError: null,
 };
@@ -149,6 +169,10 @@ export interface UseColumnConfigReturn {
   timeCol: string | null;
   /** Currently selected signal channel columns (wide format). */
   sigCols: Set<string>;
+  /** Currently selected datetime axis column (stacked format). */
+  datetimeCol: string | null;
+  /** Currently selected unit column (both formats, optional). */
+  unitCol: string | null;
   /** Error message from initial column fetch, if any. */
   fetchError: string | null;
   /** Error message from process submission, if any. */
@@ -163,6 +187,10 @@ export interface UseColumnConfigReturn {
   toggleStackedChannel: (name: string) => void;
   /** Select all available stacked channels. */
   selectAllStackedChannels: () => void;
+  /** Set the datetime axis column (stacked format). */
+  setDatetimeCol: (name: string) => void;
+  /** Set the optional unit column (null = none). */
+  setUnitCol: (name: string | null) => void;
   /** Submit the column config and trigger the backend pipeline. */
   handleSubmit: () => Promise<void>;
 }
@@ -221,6 +249,14 @@ export function useColumnConfig(
     dispatch({ type: 'SELECT_ALL_STACKED_CHANNELS' });
   }, []);
 
+  const setDatetimeCol = useCallback((name: string) => {
+    dispatch({ type: 'SET_DATETIME_COL', payload: name });
+  }, []);
+
+  const setUnitCol = useCallback((name: string | null) => {
+    dispatch({ type: 'SET_UNIT_COL', payload: name });
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     dispatch({ type: 'SUBMIT_START' });
     try {
@@ -231,6 +267,8 @@ export function useColumnConfig(
         await processSignal(signalId, {
           csv_format: 'stacked',
           stacked_channel_filter: filter,
+          datetime_column: state.datetimeCol ?? undefined,
+          unit_column: state.unitCol ?? undefined,
         });
       } else {
         if (!state.timeCol || state.sigCols.size === 0) {
@@ -241,6 +279,7 @@ export function useColumnConfig(
           csv_format: 'wide',
           time_column: state.timeCol,
           signal_columns: Array.from(state.sigCols),
+          unit_column: state.unitCol ?? undefined,
         });
       }
       dispatch({ type: 'SUBMIT_SUCCESS' });
@@ -251,12 +290,12 @@ export function useColumnConfig(
         'Failed to start processing';
       dispatch({ type: 'SUBMIT_ERROR', payload: detail });
     }
-  }, [signalId, state.csvFormat, state.timeCol, state.sigCols, state.selectedStackedChannels, state.stackedSignalNames, onConfigured]);
+  }, [signalId, state.csvFormat, state.timeCol, state.sigCols, state.selectedStackedChannels, state.stackedSignalNames, state.datetimeCol, state.unitCol, onConfigured]);
 
   const canSubmit =
     state.status === 'ready' &&
     (state.csvFormat === 'stacked'
-      ? state.selectedStackedChannels.size > 0
+      ? state.datetimeCol !== null && state.selectedStackedChannels.size > 0
       : !!state.timeCol &&
         state.sigCols.size > 0 &&
         !state.sigCols.has(state.timeCol));
@@ -269,6 +308,8 @@ export function useColumnConfig(
     selectedStackedChannels: state.selectedStackedChannels,
     timeCol: state.timeCol,
     sigCols: state.sigCols,
+    datetimeCol: state.datetimeCol,
+    unitCol: state.unitCol,
     fetchError: state.fetchError,
     submitError: state.submitError,
     canSubmit,
@@ -276,6 +317,8 @@ export function useColumnConfig(
     toggleSigCol,
     toggleStackedChannel,
     selectAllStackedChannels,
+    setDatetimeCol,
+    setUnitCol,
     handleSubmit,
   };
 }

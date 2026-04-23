@@ -1,7 +1,7 @@
 import React, { useCallback, useId } from 'react';
 import {
   Settings2, Clock, Activity, Layers,
-  ChevronRight, AlertCircle, Loader2,
+  ChevronRight, AlertCircle, Loader2, Tag,
 } from 'lucide-react';
 import { isNumericDtype, useColumnConfig } from '../hooks/useColumnConfig';
 import type { ColumnDescriptor } from '../types/signal';
@@ -160,6 +160,117 @@ function SignalColumnSelector({
 }
 
 // ---------------------------------------------------------------------------
+// Sub-component — Stacked format datetime column selector
+// ---------------------------------------------------------------------------
+
+interface DatetimeColumnSelectorProps {
+  columns: ColumnDescriptor[];
+  selected: string | null;
+  radioGroupName: string;
+  labelId: string;
+  onSelect: (name: string) => void;
+}
+
+function DatetimeColumnSelector({
+  columns, selected, radioGroupName, labelId, onSelect,
+}: DatetimeColumnSelectorProps) {
+  const temporalCols = columns.filter((c) => c.dtype === 'temporal' || c.is_candidate_time);
+  if (temporalCols.length === 0) return null;
+
+  return (
+    <div className="space-y-2" role="radiogroup" aria-labelledby={labelId}>
+      <div id={labelId} className="flex items-center gap-1.5" style={{ color: 'var(--sp-text-secondary)' }}>
+        <Clock size={12} aria-hidden="true" />
+        <span className="font-semibold uppercase tracking-wide text-[10px]">Datetime axis column</span>
+        <span className="text-red-400" aria-hidden="true">*</span>
+      </div>
+      <div className="space-y-1 max-h-32 overflow-y-auto pr-1" role="list">
+        {temporalCols.map((col) => (
+          <div key={col.name} role="listitem">
+            <ColumnRow
+              col={col}
+              isSelected={selected === col.name}
+              inputType="radio"
+              radioGroupName={radioGroupName}
+              onChange={onSelect}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-component — Unit column selector (both formats, optional)
+// ---------------------------------------------------------------------------
+
+/** Infrastructure column names for stacked format that must not be selectable as unit columns. */
+const STACKED_INFRA_NAMES = new Set(['signal_name', 'signal_value', 'datetime']);
+
+interface UnitColumnSelectorProps {
+  columns: ColumnDescriptor[];
+  selected: string | null;
+  radioGroupName: string;
+  labelId: string;
+  onSelect: (name: string | null) => void;
+  excludeNames?: Set<string>;
+}
+
+function UnitColumnSelector({
+  columns, selected, radioGroupName, labelId, onSelect, excludeNames = new Set(),
+}: UnitColumnSelectorProps) {
+  const eligibleCols = columns.filter(
+    (c) => c.dtype === 'string' && !excludeNames.has(c.name),
+  );
+  if (eligibleCols.length === 0) return null;
+
+  return (
+    <div className="space-y-2" role="radiogroup" aria-labelledby={labelId}>
+      <div id={labelId} className="flex items-center gap-1.5" style={{ color: 'var(--sp-text-secondary)' }}>
+        <Tag size={12} aria-hidden="true" />
+        <span className="font-semibold uppercase tracking-wide text-[10px]">Unit column</span>
+        <span className="font-sans text-[9px]" style={{ color: 'var(--sp-text-tertiary)' }}>(optional)</span>
+      </div>
+      <div className="space-y-1 max-h-32 overflow-y-auto pr-1" role="list">
+        {/* (none) option */}
+        <div role="listitem">
+          <label
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded cursor-pointer transition-colors hover:bg-zinc-800/40"
+            style={{
+              border: `1px solid ${selected === null ? 'var(--sp-brand,#3b82f6)' : 'var(--sp-border)'}`,
+              background: selected === null ? 'var(--sp-surface-elevated)' : undefined,
+            }}
+          >
+            <input
+              type="radio"
+              name={radioGroupName}
+              value=""
+              checked={selected === null}
+              onChange={() => onSelect(null)}
+              className="accent-blue-500"
+              aria-label="No unit column"
+            />
+            <span className="font-mono text-xs" style={{ color: 'var(--sp-text-tertiary)' }}>(none)</span>
+          </label>
+        </div>
+        {eligibleCols.map((col) => (
+          <div key={col.name} role="listitem">
+            <ColumnRow
+              col={col}
+              isSelected={selected === col.name}
+              inputType="radio"
+              radioGroupName={radioGroupName}
+              onChange={onSelect}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sub-component — Stacked format channel picker
 // ---------------------------------------------------------------------------
 
@@ -281,14 +392,19 @@ class ColumnConfigErrorBoundary extends React.Component<
  */
 export function ColumnConfigPanel({ signalId, onConfigured, onCancel }: ColumnConfigPanelProps) {
   const uid = useId();
-  const timeLabelId = `${uid}-time-label`;
-  const sigLabelId  = `${uid}-sig-label`;
-  const radioGroup  = `time-col-${uid}`;
+  const timeLabelId  = `${uid}-time-label`;
+  const sigLabelId   = `${uid}-sig-label`;
+  const radioGroup   = `time-col-${uid}`;
+  const dtLabelId    = `${uid}-dt-label`;
+  const dtRadioGroup = `dt-col-${uid}`;
+  const unitLabelId  = `${uid}-unit-label`;
+  const unitRadioGroup = `unit-col-${uid}`;
 
   const {
     status, csvFormat, columns, stackedSignalNames, selectedStackedChannels,
-    timeCol, sigCols, fetchError, submitError, canSubmit,
+    timeCol, sigCols, datetimeCol, unitCol, fetchError, submitError, canSubmit,
     setTimeCol, toggleSigCol, toggleStackedChannel, selectAllStackedChannels,
+    setDatetimeCol, setUnitCol,
     handleSubmit,
   } = useColumnConfig(signalId, onConfigured);
 
@@ -348,14 +464,21 @@ export function ColumnConfigPanel({ signalId, onConfigured, onCancel }: ColumnCo
         </div>
 
         {csvFormat === 'stacked' ? (
-          /* ── Stacked format: channel name picker ── */
-          <div>
-            <p className="text-[10px] font-sans mb-3" style={{ color: 'var(--sp-text-tertiary)' }}>
+          /* ── Stacked format: datetime axis + channel name picker + unit ── */
+          <div className="space-y-4">
+            <p className="text-[10px] font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>
               This file uses the long/stacked format (<code className="font-mono">datetime</code>,{' '}
               <code className="font-mono">signal_name</code>,{' '}
               <code className="font-mono">signal_value</code> columns).
               Select which signal channels to include in the processed output.
             </p>
+            <DatetimeColumnSelector
+              columns={columns}
+              selected={datetimeCol}
+              radioGroupName={dtRadioGroup}
+              labelId={dtLabelId}
+              onSelect={setDatetimeCol}
+            />
             <StackedChannelPicker
               signalNames={stackedSignalNames}
               selected={selectedStackedChannels}
@@ -363,23 +486,44 @@ export function ColumnConfigPanel({ signalId, onConfigured, onCancel }: ColumnCo
               onToggle={toggleStackedChannel}
               onSelectAll={selectAllStackedChannels}
             />
+            <UnitColumnSelector
+              columns={columns}
+              selected={unitCol}
+              radioGroupName={unitRadioGroup}
+              labelId={unitLabelId}
+              onSelect={setUnitCol}
+              excludeNames={STACKED_INFRA_NAMES}
+            />
           </div>
         ) : (
-          /* ── Wide format: time + signal column pickers ── */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <TimeColumnSelector
+          /* ── Wide format: time + signal column pickers + unit ── */
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <TimeColumnSelector
+                columns={columns}
+                selected={timeCol}
+                radioGroupName={radioGroup}
+                labelId={timeLabelId}
+                onSelect={setTimeCol}
+              />
+              <SignalColumnSelector
+                columns={columns}
+                selectedTimeCol={timeCol}
+                sigCols={sigCols}
+                labelId={sigLabelId}
+                onToggle={toggleSigCol}
+              />
+            </div>
+            <UnitColumnSelector
               columns={columns}
-              selected={timeCol}
-              radioGroupName={radioGroup}
-              labelId={timeLabelId}
-              onSelect={setTimeCol}
-            />
-            <SignalColumnSelector
-              columns={columns}
-              selectedTimeCol={timeCol}
-              sigCols={sigCols}
-              labelId={sigLabelId}
-              onToggle={toggleSigCol}
+              selected={unitCol}
+              radioGroupName={unitRadioGroup}
+              labelId={unitLabelId}
+              onSelect={setUnitCol}
+              excludeNames={new Set([
+                ...(timeCol ? [timeCol] : []),
+                ...Array.from(sigCols),
+              ])}
             />
           </div>
         )}
