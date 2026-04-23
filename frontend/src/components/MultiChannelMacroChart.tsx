@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Plot } from '../lib/plot';
 import type { MacroViewResponse, RunBound } from '../types/signal';
 import { buildChartTheme, OOC_MARKER } from '../lib/chartTheme';
@@ -9,6 +9,8 @@ const SERIES_COLOR = '#1a3a6b';
 
 /** Vertical inset (in paper-space units) for top-left panel title annotations. */
 const ANNOTATION_VERTICAL_INSET = 0.005;
+
+const GAP = 0.03;
 
 interface Props {
   macro: MacroViewResponse;
@@ -30,53 +32,60 @@ interface Props {
  * calendar dates and times.  Otherwise elapsed seconds are shown.
  */
 export default function MultiChannelMacroChart({ macro, visibleChannels, theme, onRelayout }: Props) {
-  const channels = macro.channels.filter((ch) => visibleChannels.has(ch.channel_name));
-  const N = channels.length;
-
   const hasDateAxis = macro.t0_epoch_s != null;
 
-  // Helper: convert elapsed seconds to ISO string when datetime axis is active.
-  const toXValue = (s: number): number | string =>
-    hasDateAxis
-      ? new Date((macro.t0_epoch_s! + s) * 1000).toISOString()
-      : s;
+  const channels = useMemo(
+    () => macro.channels.filter((ch) => visibleChannels.has(ch.channel_name)),
+    [macro.channels, visibleChannels],
+  );
 
-  // Convert elapsed-seconds x-axis to ISO date strings when a real epoch is known.
-  const xValues = macro.x.map(toXValue);
+  const toXValue = useCallback(
+    (s: number): number | string =>
+      hasDateAxis
+        ? new Date((macro.t0_epoch_s! + s) * 1000).toISOString()
+        : s,
+    [hasDateAxis, macro.t0_epoch_s],
+  );
 
-  const GAP = 0.03;
-  const panelH = N > 0 ? (1 - GAP * (N - 1)) / N : 1;
-  const domains: [number, number][] = channels.map((_, i) => {
-    const top = 1 - i * (panelH + GAP);
-    const bottom = top - panelH;
-    return [Math.max(0, bottom), Math.min(1, top)];
-  });
+  const xValues = useMemo(() => macro.x.map(toXValue), [macro.x, toXValue]);
 
-  const traces: Plotly.Data[] = channels.flatMap((ch, i) => {
-    const yaxisKey = i === 0 ? 'y' : `y${i + 1}`;
-    const oocX = xValues.filter((_, j) => ch.states[j] === 'OOC');
-    const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
-    return [
-      {
-        x: xValues, y: ch.y, type: 'scattergl', mode: 'lines',
-        name: ch.channel_name, xaxis: 'x', yaxis: yaxisKey,
-        line: { color: SERIES_COLOR, width: 1.5 },
-        hovertemplate: `%{y:.4g}<extra>${ch.channel_name}</extra>`,
-      } as Plotly.Data,
-      ...(oocX.length > 0 ? [{
-        x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-        name: `${ch.channel_name} OOC`, xaxis: 'x', yaxis: yaxisKey,
-        showlegend: false,
-        marker: OOC_MARKER,
-        hoverinfo: 'skip',
-      } as Plotly.Data] : []),
-    ];
-  });
+  const domains = useMemo((): [number, number][] => {
+    const n = channels.length;
+    const panelH = n > 0 ? (1 - GAP * (n - 1)) / n : 1;
+    return channels.map((_, i) => {
+      const top = 1 - i * (panelH + GAP);
+      const bottom = top - panelH;
+      return [Math.max(0, bottom), Math.min(1, top)];
+    });
+  }, [channels]);
 
-  const channelNamesKey = channels.map((c) => c.channel_name).join(',');
-  const isLight = theme === 'light';
+  const traces = useMemo((): Plotly.Data[] =>
+    channels.flatMap((ch, i) => {
+      const yaxisKey = i === 0 ? 'y' : `y${i + 1}`;
+      const oocX = xValues.filter((_, j) => ch.states[j] === 'OOC');
+      const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
+      return [
+        {
+          x: xValues, y: ch.y, type: 'scattergl', mode: 'lines',
+          name: ch.channel_name, xaxis: 'x', yaxis: yaxisKey,
+          line: { color: SERIES_COLOR, width: 1.5 },
+          hovertemplate: `%{y:.4g}<extra>${ch.channel_name}</extra>`,
+        } as Plotly.Data,
+        ...(oocX.length > 0 ? [{
+          x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
+          name: `${ch.channel_name} OOC`, xaxis: 'x', yaxis: yaxisKey,
+          showlegend: false,
+          marker: OOC_MARKER,
+          hoverinfo: 'skip',
+        } as Plotly.Data] : []),
+      ];
+    }),
+    [channels, xValues],
+  );
 
   const layout = useMemo((): Partial<Plotly.Layout> => {
+    const N = channels.length;
+    const isLight = theme === 'light';
     const base = buildChartTheme(theme);
 
     const innerShapes: Partial<Plotly.Shape>[] = macro.runs.flatMap((r: RunBound) =>
@@ -189,10 +198,9 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
     });
 
     return l as Partial<Plotly.Layout>;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelNamesKey, macro.runs, macro.channels, macro.t0_epoch_s, theme]);
+  }, [channels, domains, macro.runs, hasDateAxis, toXValue, theme]);
 
-  const height = Math.max(220, N * 140 + 80);
+  const height = Math.max(220, channels.length * 140 + 80);
 
   return (
     <Plot

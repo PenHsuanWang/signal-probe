@@ -10,6 +10,7 @@ from fastapi import (
 )
 
 from app.application.signal.service import SignalService
+from app.core.exceptions import NotFoundException
 from app.db.session import AsyncSessionLocal
 from app.domain.signal.schemas import (
     MacroViewResponse,
@@ -53,7 +54,11 @@ async def upload_signal(
     return SignalMetadataResponse.model_validate(signal)
 
 
-@router.get("", response_model=list[SignalMetadataResponse])
+@router.get(
+    "",
+    response_model=list[SignalMetadataResponse],
+    summary="List all signals for the current user",
+)
 async def list_signals(
     session: DbSession,
     storage: StorageDep,
@@ -63,7 +68,11 @@ async def list_signals(
     return await svc.list_signals(current_user.id)
 
 
-@router.get("/{signal_id}", response_model=SignalMetadataResponse)
+@router.get(
+    "/{signal_id}",
+    response_model=SignalMetadataResponse,
+    summary="Get a signal by ID",
+)
 async def get_signal(
     signal_id: uuid.UUID,
     session: DbSession,
@@ -77,7 +86,11 @@ async def get_signal(
     return SignalMetadataResponse.model_validate(signal)
 
 
-@router.patch("/{signal_id}", response_model=SignalMetadataResponse)
+@router.patch(
+    "/{signal_id}",
+    response_model=SignalMetadataResponse,
+    summary="Rename a signal",
+)
 async def rename_signal(
     signal_id: uuid.UUID,
     body: SignalRenameRequest,
@@ -95,7 +108,11 @@ async def rename_signal(
     return result
 
 
-@router.delete("/{signal_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{signal_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a signal and all its artifacts",
+)
 async def delete_signal(
     signal_id: uuid.UUID,
     session: DbSession,
@@ -111,7 +128,11 @@ async def delete_signal(
         raise HTTPException(status_code=404, detail="Signal not found")
 
 
-@router.get("/{signal_id}/macro", response_model=MacroViewResponse)
+@router.get(
+    "/{signal_id}/macro",
+    response_model=MacroViewResponse,
+    summary="Get full macro-view data for a completed signal",
+)
 async def get_macro_view(
     signal_id: uuid.UUID,
     session: DbSession,
@@ -124,11 +145,17 @@ async def get_macro_view(
         raise HTTPException(status_code=404, detail="Signal not found")
     try:
         return await svc.get_macro_view(signal_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/{signal_id}/runs", response_model=list[RunChunkResponse])
+@router.get(
+    "/{signal_id}/runs",
+    response_model=list[RunChunkResponse],
+    summary="Get detailed run-chunk data for selected run IDs",
+)
 async def get_run_chunks(
     signal_id: uuid.UUID,
     session: DbSession,
@@ -142,6 +169,8 @@ async def get_run_chunks(
         raise HTTPException(status_code=404, detail="Signal not found")
     try:
         return await svc.get_run_chunks(signal_id, run_ids)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -167,6 +196,8 @@ async def get_raw_columns(
         raise HTTPException(status_code=404, detail="Signal not found")
     try:
         return await svc.get_raw_columns(signal_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
@@ -200,6 +231,8 @@ async def process_signal(
     try:
         result = await svc.process_signal(signal_id, body, AsyncSessionLocal)
         return SignalMetadataResponse.model_validate(result)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except KeyError as e:
@@ -231,6 +264,8 @@ async def reconfigure_signal(
     try:
         result = await svc.reconfigure_signal(signal_id)
         return SignalMetadataResponse.model_validate(result)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:

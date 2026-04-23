@@ -31,6 +31,10 @@ import polars as pl
 
 from app.domain.signal.algorithms import classifier, segmenter
 from app.domain.signal.enums import ProcessingStatus
+from app.domain.signal.format_constants import (
+    STACKED_COL_ALIASES,
+    STACKED_REQUIRED_COLS,
+)
 from app.domain.signal.repository import SignalRepository
 from app.infrastructure.storage.interface import IStorageAdapter
 
@@ -38,14 +42,9 @@ logger = logging.getLogger(__name__)
 
 # ── Format detection ──────────────────────────────────────────────────────────
 
-_STACKED_REQUIRED_COLS = {"datetime", "signal_name", "signal_value"}
-
-# Maps lower-cased non-standard column names → canonical stacked-format names.
-# Extend this dict whenever a new vendor variant is encountered.
-_STACKED_COL_ALIASES: dict[str, str] = {
-    "measurement_datetime": "datetime",
-    "measurement_value": "signal_value",
-}
+# Canonical constants live in format_constants; bind local aliases for brevity.
+_STACKED_REQUIRED_COLS = STACKED_REQUIRED_COLS
+_STACKED_COL_ALIASES = STACKED_COL_ALIASES
 
 
 def _normalize_stacked_columns(df: pl.DataFrame) -> pl.DataFrame:
@@ -175,6 +174,45 @@ def _read_stacked_signal_file(
     return timestamps_s, channels, t0_epoch_s
 
 
+# ── Shared temporal-time-column helper ───────────────────────────────────────
+
+
+def _parse_temporal_time_column(
+    df: pl.DataFrame,
+    time_col: str,
+    signal_cols: list[str],
+) -> tuple[list[float], dict[str, list[float]], float]:
+    """Convert a temporal time column to elapsed seconds and extract channels.
+
+    Shared by :func:`_read_wide_signal_file` and :func:`_read_with_config` to
+    avoid duplicating the microsecond-precision epoch arithmetic.
+
+    Args:
+        df: DataFrame already filtered to ``[time_col, *signal_cols]`` with
+            signal columns cast to Float64 and nulls dropped.
+        time_col: Name of the temporal column (must be a Polars temporal dtype).
+        signal_cols: Names of the signal value columns.
+
+    Returns:
+        timestamps_s: Elapsed-seconds list starting at 0.0.
+        channels: ``{channel_name: [float, ...]}`` parallel to ``timestamps_s``.
+        t0_epoch_s: Unix epoch seconds of the first (earliest) timestamp.
+
+    Notes:
+        We cast to ``Int64`` (microseconds since epoch) rather than using
+        ``.dt.total_seconds()`` because the latter truncates sub-second
+        precision to whole seconds.
+    """
+    epoch_us_series = df[time_col].cast(pl.Int64)
+    t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
+    timestamps_s: list[float] = [
+        (t - t0_epoch_us) / 1_000_000.0 for t in epoch_us_series.to_list()
+    ]
+    t0_epoch_s: float = t0_epoch_us / 1_000_000.0
+    channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_cols}
+    return timestamps_s, channels, t0_epoch_s
+
+
 # ── Wide-format reader (existing logic, extracted) ────────────────────────────
 
 
@@ -223,17 +261,9 @@ def _read_wide_signal_file(
                 "File contains no valid numeric data points after cleaning."
             )
 
-        # Convert temporal column to elapsed seconds; record epoch of t0.
-        # We use cast(Int64) (microseconds since epoch) rather than
-        # .dt.total_seconds() because the latter returns Int64 and truncates
-        # sub-second precision.
-        epoch_us_series = df[time_col].cast(pl.Int64)
-        t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
-        timestamps_s: list[float] = [
-            (t - t0_epoch_us) / 1_000_000.0 for t in epoch_us_series.to_list()
-        ]
-        t0_epoch_s: float | None = t0_epoch_us / 1_000_000.0
-        channels: dict[str, list[float]] = {c: df[c].to_list() for c in ch_cols}
+        timestamps_s, channels, t0_epoch_s = _parse_temporal_time_column(
+            df, time_col, ch_cols
+        )
         return timestamps_s, channels, t0_epoch_s
     else:
         # Numeric time column: cast everything to Float64
@@ -328,16 +358,10 @@ def _read_with_config(
                 "File contains no valid numeric data points after cleaning."
             )
 
-        # Convert temporal column to elapsed seconds; record epoch of t0.
-        # We use cast(Int64) (microseconds since epoch) rather than
-        # .dt.total_seconds() because the latter returns Int64 and truncates
-        # sub-second precision.
-        epoch_us_series = df[time_column].cast(pl.Int64)
-        t0_epoch_us: int = epoch_us_series[0]  # type: ignore[assignment]
-        timestamps_s: list[float] = [
-            (t - t0_epoch_us) / 1_000_000.0 for t in epoch_us_series.to_list()
-        ]
-        t0_epoch_s: float | None = t0_epoch_us / 1_000_000.0
+        timestamps_s, channels, t0_epoch_s_val = _parse_temporal_time_column(
+            df, time_column, signal_columns
+        )
+        return timestamps_s, channels, t0_epoch_s_val
     else:
         # Numeric time column: cast everything to Float64
         all_cols = [time_column, *signal_columns]
@@ -352,10 +376,8 @@ def _read_with_config(
         ts: list[float] = df[time_column].to_list()
         t0 = ts[0]
         timestamps_s = [t - t0 for t in ts]
-        t0_epoch_s = None
-
-    channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_columns}
-    return timestamps_s, channels, t0_epoch_s
+        channels: dict[str, list[float]] = {c: df[c].to_list() for c in signal_columns}
+        return timestamps_s, channels, None
 
 
 async def run_pipeline(
