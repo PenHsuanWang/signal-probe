@@ -228,10 +228,10 @@ export default function SignalsPage() {
                   )}
                   {s.status === 'COMPLETED' && (
                     <button
-                      onClick={() => navigate('/')}
+                      onClick={() => navigate(`/signals/${s.id}/analysis`)}
                       className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
                     >
-                      Explore →
+                      Analyse →
                     </button>
                   )}
                   {(s.status === 'COMPLETED' || s.status === 'FAILED') && (

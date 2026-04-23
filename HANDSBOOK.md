@@ -352,6 +352,32 @@ CREATE TABLE run_segments (
 - **Decision:** `datetime_column` in `ProcessSignalRequest` is optional (`str | None`, default `None`). When omitted, the pipeline falls back to existing `STACKED_COL_ALIASES` detection.
 - **Rationale:** Existing API clients that do not send `datetime_column` continue to work unchanged. The frontend always sends the user-selected value, but old integrations and test suites remain unaffected. This preserves backward compatibility without a versioned endpoint.
 
+### ADR-010 — STFT Engine as a Pure Domain Module
+- **Decision:** `domain/analysis/stft_engine.py` has zero FastAPI, SQLAlchemy, or Polars imports. It depends only on `numpy` and `scipy.signal`.
+- **Rationale:** Clean Architecture domain invariant — the domain layer must be framework-free. Pure functions are trivially testable without mocking infrastructure. The 61-test engine suite runs in milliseconds without any DB or HTTP setup.
+- **Trade-off:** A second Polars scan happens in the service layer after the domain engine returns (two reads per STFT request). Negligible for prototype; could be fused into one scan in a future optimisation pass.
+
+### ADR-011 — Scipy as the Window Function Backend
+- **Decision:** Window tapering uses `scipy.signal.get_window(name, size)` rather than hand-rolled formulas.
+- **Rationale:** SciPy ships 15+ battle-tested window implementations. Maintaining custom formulas for Blackman-Harris, Nuttall, Parzen, etc., would be error-prone and untestable. `uv add scipy` adds ~30 MB to the venv but eliminates all custom DSP math.
+- **Risk:** `scipy` stubs are untyped (`# type: ignore[import-untyped]` comment required). Acceptable; the function signatures are stable across SciPy releases.
+
+### ADR-012 — Spectrogram Time Axis Downsampled to 2 000 Bins
+- **Decision:** When the natural number of time bins in a spectrogram exceeds 2 000, the time axis is uniformly downsampled and `downsampled: true` is set in the response.
+- **Rationale:** A 10-minute signal at 1 kHz sampling rate with a 512-sample hop produces ~1 170 frames — within limit. But a 1-hour signal produces ~7 000 frames. Sending a 7 000 × 513 matrix of `float64` values is ~29 MB per request; the default `STFT_MAX_RESPONSE_MB` cap (50 MB) provides a safety valve. Uniform index selection (`np.linspace`) preserves the temporal spread better than a random sample.
+
+### ADR-013 — Spectrogram Computation is User-Initiated
+- **Decision:** The spectrogram fetch is triggered by an explicit "Compute Spectrogram" button, not automatically when the channel or window parameters change.
+- **Rationale:** The spectrogram endpoint scans the entire signal and may take several seconds for long files. Auto-triggering on every parameter change would create a poor UX (constant loading spinners) and high backend load. STFT (single window) is debounced at 150 ms and fires automatically, since it is O(window_size) — negligible.
+
+### ADR-014 — ConflictException for Non-COMPLETED Signals
+- **Decision:** `STFTService` raises `ConflictException` (HTTP 409) when the requested signal is not in `COMPLETED` status.
+- **Rationale:** The analysis endpoints are only valid after the pipeline has fully processed the Parquet file. Returning 404 would be misleading (the signal exists). 409 Conflict communicates "the resource exists but its current state prevents this operation" — the correct HTTP semantics.
+
+### ADR-015 — Median-Based Sampling Rate Inference
+- **Decision:** `_infer_sampling_rate` uses `np.median(np.diff(timestamps))` rather than `mean` or the first Δt.
+- **Rationale:** Real-world signals often have occasional missed samples (dropped packets, sensor glitches). The median of Δt is robust against a small number of irregular gaps, unlike the mean which is skewed by outliers. Raises `ValueError` if the median Δt ≤ 0, guarding against reversed or constant-timestamp data.
+
 ---
 
 ## 9. Known Issues & Implementation Status
@@ -422,6 +448,39 @@ CREATE TABLE run_segments (
 | **Unit column selector** (optional, both formats, `UnitColumnSelector`) | ✅ Implemented |
 | **Per-channel y-axis unit labels** (`channel_units` → `MultiChannelMacroChart`) | ✅ Implemented |
 | `_extract_channel_units` + `__unit_<ch>` Parquet columns | ✅ Implemented |
+
+### ✅ Spectral Analysis (STFT) — Fully Implemented
+
+#### Backend
+
+| Area | Status |
+|------|--------|
+| `domain/analysis/schemas.py` — `WindowFunction` StrEnum (15 values), `STFTWindowConfig`, `SpectrogramConfig` (Pydantic v2, model_validator power-of-2 + bounds checks), `STFTResponse`, `SpectrogramResponse` | ✅ Implemented |
+| `domain/analysis/stft_engine.py` — pure `compute_stft()` + `compute_spectrogram()` (zero framework imports; NumPy `rfft`/`rfftfreq` + SciPy `get_window`; dBFS; 2 000-bin downsampling) | ✅ Implemented |
+| `application/analysis/stft_service.py` — `STFTService` with ownership/status/channel validation, Polars lazy columnar Parquet scan, median-based `_infer_sampling_rate()`, payload-size guard (`STFT_MAX_RESPONSE_MB`) | ✅ Implemented |
+| `presentation/api/v1/endpoints/analysis.py` — `GET /{id}/analysis/stft` + `GET /{id}/analysis/spectrogram`; exception mapping 404/409/413/422 | ✅ Implemented |
+| `core/exceptions.py` — `ConflictException` (HTTP 409) | ✅ Implemented |
+| `presentation/api/v1/router.py` — `analysis.router` registered under `/signals` prefix | ✅ Implemented |
+| `tests/test_stft_engine.py` — 61 unit tests: all 15 window functions, all 16 power-of-2 sizes, DC/Nyquist/linearity numerical accuracy | ✅ 61 tests passing |
+| `scipy` dependency added via `uv add scipy` | ✅ Added |
+| Total test suite | ✅ 139 tests passing, ruff clean |
+
+#### Frontend
+
+| Area | Status |
+|------|--------|
+| `types/signal.ts` — `WindowFunction` union (15 values), `STFTParams`, `STFTWindowConfig`, `STFTResponse`, `SpectrogramParams`, `SpectrogramResponse` | ✅ Implemented |
+| `lib/api.ts` — `getStft()` + `getSpectrogram()` API helpers | ✅ Implemented |
+| `hooks/useSTFT.ts` — `useReducer` state machine; 150 ms debounced STFT fetch; AbortController inflight cancellation; user-initiated spectrogram via `computeSpectrogram()` | ✅ Implemented |
+| `components/WindowConfigControls.tsx` — `window_fn` select (15 options), `window_size` power-of-2 presets, optional `hop_size` select with overlap-fraction labels | ✅ Implemented |
+| `components/TimeSignalWithWindow.tsx` — Plotly `scattergl` single-channel line + **editable vrect** shape; `onRelayout` extracts `shapes[0].x0/x1`; handles numeric and ISO-date x-axes | ✅ Implemented |
+| `components/SpectrumChart.tsx` — Plotly bar chart, dominant-frequency dashed line + annotation, log/linear Y toggle, CSV export | ✅ Implemented |
+| `components/SpectrogramHeatmap.tsx` — user-initiated Plotly heatmap (dBFS), colorscale selector (Viridis/Plasma/Inferno/Hot/Jet/Greys), PNG export via `PlotlyInstance.toImage`, downsampled indicator | ✅ Implemented |
+| `components/STFTPanel.tsx` — layout orchestrator: channel selector + `WindowConfigControls` + `TimeSignalWithWindow` + `SpectrumChart` + `SpectrogramHeatmap` + error boundary | ✅ Implemented |
+| `pages/AnalysisPage.tsx` — route `/signals/:id/analysis`; fetches signal + macro view; breadcrumb nav; COMPLETED-status guard; loading/error states | ✅ Implemented |
+| `App.tsx` — route `signals/:id/analysis → <AnalysisPage />` added | ✅ Implemented |
+| `pages/SignalsPage.tsx` — "Analyse →" button on COMPLETED rows navigates to `/signals/{id}/analysis` | ✅ Implemented |
+| Build (`tsc -b && vite build`) | ✅ Zero errors |
 
 ---
 
@@ -575,3 +634,99 @@ git push origin vX.Y.Z
 | `uvx: command not found` | Install uv globally (`curl -LsSf https://astral.sh/uv/install.sh | sh`) |
 | Tag pushed before `master` merge | Release will point to a non-master state — push tag only after merge |
 | `git push origin master` rejected | Branch is protected — open a PR from `dev` |
+
+---
+
+## § 13 — STFT Spectral Analysis: Engineering Notes
+
+### Overview
+
+The STFT feature adds a `/signals/:id/analysis` page that lets users interactively slide a time window across a signal channel and instantly see the frequency spectrum (via STFT) and the full time-frequency heatmap (spectrogram).
+
+### Architecture Summary
+
+```
+AnalysisPage (page)
+  └── STFTPanel (orchestrator)
+        ├── WindowConfigControls   ← window function, size, hop
+        ├── TimeSignalWithWindow   ← editable vrect on Plotly chart
+        ├── SpectrumChart          ← single-window FFT (auto, debounced)
+        └── SpectrogramHeatmap     ← full spectrogram (user-initiated)
+```
+
+`useSTFT` hook owns all server state. It fires the STFT endpoint automatically with a 150 ms debounce when the window bounds or config change. Spectrogram is user-initiated via `computeSpectrogram()` to avoid large payload fetches on every parameter change.
+
+### Backend Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/signals/{id}/analysis/stft` | Single-window FFT → `STFTResponse` |
+| `GET` | `/api/v1/signals/{id}/analysis/spectrogram` | Full STFT heatmap → `SpectrogramResponse` |
+
+Both accept `channel_name`, `start_s`, `end_s`, `window_fn`, `window_size`, `hop_size` as query params.
+
+### Key Implementation Details
+
+**Window dragging (date vs numeric axis)**
+`TimeSignalWithWindow` places a Plotly vrect shape with `editable: true`. On drag, `onRelayout` fires with `shapes[0].x0` and `shapes[0].x1`. When `t0_epoch_s` is present, the x-axis is `type: 'date'` and Plotly returns ISO-8601 strings — these must be converted back to seconds-from-t0 before calling the API:
+
+```ts
+const t = new Date(isoStr).getTime() / 1000 - t0_epoch_s;
+```
+
+**Spectrogram z-axis transposition**
+The backend returns `magnitude_db` shaped `[n_time_bins × n_freq_bins]`. Plotly heatmap expects `z[row][col]` where row = y-axis (frequency), col = x-axis (time). Transposition:
+
+```ts
+const zData: number[][] = [];
+for (let fi = 0; fi < nFreq; fi++) {
+  zData[fi] = [];
+  for (let ti = 0; ti < nTime; ti++) {
+    zData[fi][ti] = magnitude_db[ti][fi];
+  }
+}
+```
+
+**Plotly TypeScript type gaps**
+`@types/plotly.js@3.x` does not type several fields used in the STFT components. Use `as unknown as T` casts (not suppressions):
+
+| Issue | Cast |
+|-------|------|
+| `editable` on a `Shape` | `shape as unknown as Plotly.Shape` |
+| `coloraxis` on `Layout` | `layout as unknown as Partial<Plotly.Layout>` |
+| `coloraxis: 'coloraxis'` on heatmap trace | `trace as unknown as Plotly.Data` |
+
+**PNG export**
+Use the static import of `plotly.js-dist-min` (matching `lib/plot.ts`). Dynamic `import('plotly.js-dist-min')` inside a callback is ineffective when the module is already statically bundled by Vite. ESM interop pattern:
+
+```ts
+import * as _Plotly from 'plotly.js-dist-min';
+const PlotlyInstance = (_Plotly as any).default ?? _Plotly;
+await PlotlyInstance.toImage(divRef.current, { format: 'png', ... });
+```
+
+**Sampling rate inference**
+The backend uses `np.median(np.diff(timestamps))` to infer the sampling rate from the Parquet time column. Median is robust against occasional dropped samples or irregular gaps that would skew a mean.
+
+### Running the Analysis Feature
+
+1. Upload a CSV and process it (existing two-step flow).
+2. On the Signals page, click **Analyse →** on any COMPLETED signal.
+3. Select a channel → the default window loads and the spectrum renders automatically.
+4. Drag the vrect on the time chart to a region of interest.
+5. Adjust window function / size in `WindowConfigControls` for resolution trade-off.
+6. Click **Compute Spectrogram** to fetch the full time-frequency heatmap.
+7. Change colorscale or export PNG from the heatmap toolbar.
+
+### Testing
+
+```bash
+# Backend engine unit tests (fast, no DB)
+cd backend && .venv/bin/python -m pytest tests/test_stft_engine.py -v
+
+# Full backend suite
+cd backend && .venv/bin/python -m pytest tests/ -v   # 139 tests
+
+# Frontend TypeScript build
+cd frontend && npx tsc -b && npx vite build
+```

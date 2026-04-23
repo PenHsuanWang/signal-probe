@@ -9,6 +9,10 @@ import type {
   RawColumnsResponse,
   RunChunkResponse,
   SignalMetadata,
+  SpectrogramParams,
+  SpectrogramResponse,
+  STFTParams,
+  STFTResponse,
 } from '../types/signal';
 
 export const api = axios.create({
@@ -137,4 +141,25 @@ export async function removeGroupMember(
   signalId: string
 ): Promise<void> {
   await api.delete(`/groups/${groupId}/members/${signalId}`);
+}
+
+// ── Spectral Analysis (STFT) API helpers ─────────────────────────────────────
+
+export async function getStft(
+  signalId: string,
+  params: STFTParams,
+): Promise<STFTResponse> {
+  const res = await api.get<STFTResponse>(`/signals/${signalId}/analysis/stft`, { params });
+  return res.data;
+}
+
+export async function getSpectrogram(
+  signalId: string,
+  params: SpectrogramParams,
+): Promise<SpectrogramResponse> {
+  const res = await api.get<SpectrogramResponse>(
+    `/signals/${signalId}/analysis/spectrogram`,
+    { params },
+  );
+  return res.data;
 }

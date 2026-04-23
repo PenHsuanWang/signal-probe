@@ -8,6 +8,7 @@ import Register from './pages/Register';
 import SignalsPage from './pages/SignalsPage';
 import GroupsPage from './pages/GroupsPage';
 import SettingsPage from './pages/SettingsPage';
+import AnalysisPage from './pages/AnalysisPage';
 
 // ── Global error boundary ────────────────────────────────────────────────────
 interface EBState { hasError: boolean; message: string }
@@ -56,6 +57,7 @@ function App() {
             <Route path="/" element={<MainLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="signals" element={<SignalsPage />} />
+              <Route path="signals/:id/analysis" element={<AnalysisPage />} />
               <Route path="groups" element={<GroupsPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>

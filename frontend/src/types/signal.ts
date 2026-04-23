@@ -118,6 +118,65 @@ export interface RunChunkResponse {
   channels: ChannelChunkData[];
 }
 
+// ── STFT / Spectral Analysis ─────────────────────────────────────────────────
+
+/**
+ * Window function names supported by the STFT engine.
+ * Mirrors the backend `WindowFunction` StrEnum.
+ */
+export type WindowFunction =
+  | 'hann' | 'hamming' | 'blackman' | 'bartlett' | 'flattop'
+  | 'parzen' | 'bohman' | 'blackmanharris' | 'nuttall' | 'barthann'
+  | 'cosine' | 'exponential' | 'tukey' | 'taylor' | 'boxcar';
+
+/** Query parameters for the STFT endpoint. */
+export interface STFTParams {
+  channel_name: string;
+  start_s: number;
+  end_s: number;
+  window_fn?: WindowFunction;
+  window_size?: number;
+}
+
+/** Nested window config returned inside `STFTResponse`. */
+export interface STFTWindowConfig {
+  start_s: number;
+  end_s: number;
+  window_fn: WindowFunction;
+  window_size: number;
+}
+
+/** Response from GET /signals/{id}/analysis/stft */
+export interface STFTResponse {
+  signal_id: string;
+  channel_name: string;
+  frequencies_hz: number[];
+  magnitudes: number[];
+  dominant_frequency_hz: number | null;
+  window_config: STFTWindowConfig;
+  sampling_rate_hz: number;
+}
+
+/** Query parameters for the spectrogram endpoint. */
+export interface SpectrogramParams {
+  channel_name: string;
+  window_fn?: WindowFunction;
+  window_size?: number;
+  hop_size?: number;
+}
+
+/** Response from GET /signals/{id}/analysis/spectrogram */
+export interface SpectrogramResponse {
+  signal_id: string;
+  channel_name: string;
+  time_bins_s: number[];
+  frequency_bins_hz: number[];
+  /** 2-D array: [n_time_bins × n_freq_bins] in dBFS. */
+  magnitude_db: number[][];
+  sampling_rate_hz: number;
+  downsampled: boolean;
+}
+
 // ── Groups ───────────────────────────────────────────────────────────────────
 
 export interface GroupMember {
