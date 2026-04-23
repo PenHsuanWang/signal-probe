@@ -858,3 +858,273 @@ class TestColumnInspectorDetectFormatAliases:
 
         _, names = ColumnInspector().detect_csv_format(csv_path)
         assert names == ["AChannel", "ZChannel"]
+
+
+# ── datetime_column override for stacked reader ───────────────────────────────
+
+
+class TestReadStackedDatetimeColumnOverride:
+    """_read_stacked_signal_file must accept an explicit datetime_col override."""
+
+    def _make_custom_dt_df(self, rows: list[tuple]) -> pl.DataFrame:
+        """Build stacked DataFrame with a non-canonical 'ts_utc' datetime column."""
+        datetimes, names, values = zip(*rows)
+        return pl.DataFrame(
+            {
+                "ts_utc": pl.Series(list(datetimes)).str.to_datetime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "signal_name": list(names),
+                "signal_value": pl.Series(list(values), dtype=pl.Float64),
+            }
+        )
+
+    def test_override_renames_column_before_pivot(self):
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:01:00", "ch_a", 2.0),
+        ]
+        df = self._make_custom_dt_df(rows)
+        ts, channels, _ = _read_stacked_signal_file(df, datetime_col="ts_utc")
+        assert "ch_a" in channels
+        assert ts == pytest.approx([0.0, 60.0])
+
+    def test_override_elapsed_seconds_correct(self):
+        rows = [
+            ("2026-01-01 00:00:00", "sig", 10.0),
+            ("2026-01-01 00:00:30", "sig", 20.0),
+            ("2026-01-01 00:01:00", "sig", 30.0),
+        ]
+        df = self._make_custom_dt_df(rows)
+        ts, _, _ = _read_stacked_signal_file(df, datetime_col="ts_utc")
+        assert ts == pytest.approx([0.0, 30.0, 60.0])
+
+    def test_override_works_with_channel_filter(self):
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:00:00", "ch_b", 2.0),
+        ]
+        df = self._make_custom_dt_df(rows)
+        _, channels, _ = _read_stacked_signal_file(
+            df, channel_filter=["ch_b"], datetime_col="ts_utc"
+        )
+        assert list(channels.keys()) == ["ch_b"]
+
+    def test_no_override_still_works_with_canonical_column(self):
+        """Omitting datetime_col must not break existing stacked DataFrames."""
+        rows = [
+            ("2026-01-01 00:00:00", "s1", 5.0),
+            ("2026-01-01 00:01:00", "s1", 6.0),
+        ]
+        df = _make_stacked_df(rows)
+        ts, channels, _ = _read_stacked_signal_file(df)
+        assert "s1" in channels
+        assert ts == pytest.approx([0.0, 60.0])
+
+
+# ── _extract_channel_units ────────────────────────────────────────────────────
+
+
+class TestExtractChannelUnits:
+    """_extract_channel_units: stacked and wide format unit extraction."""
+
+    def _make_stacked_with_unit(self, rows_with_unit: list[tuple]) -> pl.DataFrame:
+        """Build stacked DataFrame with an extra 'unit' column."""
+        datetimes, names, values, units = zip(*rows_with_unit)
+        return pl.DataFrame(
+            {
+                "datetime": pl.Series(list(datetimes)).str.to_datetime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "signal_name": list(names),
+                "signal_value": pl.Series(list(values), dtype=pl.Float64),
+                "unit": list(units),
+            }
+        )
+
+    def test_stacked_extracts_unit_per_channel(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        rows = [
+            ("2026-01-01 00:00:00", "pressure", 1.0, "psig"),
+            ("2026-01-01 00:01:00", "pressure", 2.0, "psig"),
+            ("2026-01-01 00:00:00", "temp", 25.0, "°C"),
+            ("2026-01-01 00:01:00", "temp", 26.0, "°C"),
+        ]
+        df = self._make_stacked_with_unit(rows)
+        channels: dict = {"pressure": [], "temp": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert result == {"pressure": "psig", "temp": "°C"}
+
+    def test_stacked_only_returns_units_for_processed_channels(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0, "mV"),
+            ("2026-01-01 00:00:00", "ch_b", 2.0, "A"),
+        ]
+        df = self._make_stacked_with_unit(rows)
+        # Only ch_a was processed (e.g. channel_filter was applied)
+        channels: dict = {"ch_a": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert result == {"ch_a": "mV"}
+        assert "ch_b" not in result
+
+    def test_stacked_uses_first_nonnull_unit_per_channel(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        rows = [
+            ("2026-01-01 00:00:00", "sig", 1.0, "bar"),
+            ("2026-01-01 00:01:00", "sig", 2.0, "bar"),
+        ]
+        df = self._make_stacked_with_unit(rows)
+        channels: dict = {"sig": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert result["sig"] == "bar"
+
+    def test_stacked_missing_unit_col_returns_empty(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        df = _make_stacked_df([("2026-01-01 00:00:00", "sig", 1.0)])
+        channels: dict = {"sig": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert result == {}
+
+    def test_stacked_unit_truncated_to_32_chars(self):
+        from app.application.signal.pipeline import (
+            _UNIT_MAX_LEN,
+            _extract_channel_units,
+        )
+
+        long_unit = "x" * 100
+        rows = [("2026-01-01 00:00:00", "sig", 1.0, long_unit)]
+        df = self._make_stacked_with_unit(rows)
+        channels: dict = {"sig": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert len(result["sig"]) == _UNIT_MAX_LEN
+
+    def test_wide_applies_mode_to_all_channels(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        df = pl.DataFrame(
+            {
+                "ts": [0.0, 1.0, 2.0],
+                "ch_a": [1.0, 2.0, 3.0],
+                "ch_b": [4.0, 5.0, 6.0],
+                "unit": ["mV", "mV", "mV"],
+            }
+        )
+        channels: dict = {"ch_a": [], "ch_b": []}
+        result = _extract_channel_units(df, "unit", channels, "wide")
+        assert result == {"ch_a": "mV", "ch_b": "mV"}
+
+    def test_wide_uses_mode_when_mixed_values(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        df = pl.DataFrame(
+            {
+                "ts": [0.0, 1.0, 2.0, 3.0],
+                "ch_a": [1.0, 2.0, 3.0, 4.0],
+                "unit": ["mV", "mV", "mV", "V"],  # mode is "mV"
+            }
+        )
+        channels: dict = {"ch_a": []}
+        result = _extract_channel_units(df, "unit", channels, "wide")
+        assert result["ch_a"] == "mV"
+
+    def test_wide_missing_unit_col_returns_empty(self):
+        from app.application.signal.pipeline import _extract_channel_units
+
+        df = pl.DataFrame({"ts": [0.0], "ch_a": [1.0]})
+        channels: dict = {"ch_a": []}
+        result = _extract_channel_units(df, "unit", channels, "wide")
+        assert result == {}
+
+    def test_alias_df_unit_col_resolved_correctly(self):
+        """Unit column from alias stacked CSV (_make_alias_stacked_df) is found."""
+        from app.application.signal.pipeline import _extract_channel_units
+
+        rows = [
+            ("2026-01-01 00:00:00", "ch_a", 1.0),
+            ("2026-01-01 00:01:00", "ch_a", 2.0),
+        ]
+        df = _make_alias_stacked_df(rows)  # has 'unit' column = 'psig'
+        channels: dict = {"ch_a": []}
+        result = _extract_channel_units(df, "unit", channels, "stacked")
+        assert result == {"ch_a": "psig"}
+
+
+# ── ProcessSignalRequest: new field validation ────────────────────────────────
+
+
+class TestProcessSignalRequestNewFields:
+    """ProcessSignalRequest: validate new datetime_column and unit_column fields."""
+
+    def test_stacked_with_datetime_column_is_valid(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(
+            csv_format="stacked",
+            datetime_column="ts_utc",
+        )
+        assert req.datetime_column == "ts_utc"
+
+    def test_wide_with_unit_column_is_valid(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(
+            csv_format="wide",
+            time_column="ts",
+            signal_columns=["ch_a"],
+            unit_column="unit",
+        )
+        assert req.unit_column == "unit"
+
+    def test_wide_unit_column_same_as_time_column_raises(self):
+        from pydantic import ValidationError
+
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        with pytest.raises(
+            ValidationError,
+            match="unit_column cannot be the same as time_column",
+        ):
+            ProcessSignalRequest(
+                csv_format="wide",
+                time_column="ts",
+                signal_columns=["ch_a"],
+                unit_column="ts",
+            )
+
+    def test_wide_unit_column_in_signal_columns_raises(self):
+        from pydantic import ValidationError
+
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        with pytest.raises(
+            ValidationError,
+            match="unit_column cannot appear in signal_columns",
+        ):
+            ProcessSignalRequest(
+                csv_format="wide",
+                time_column="ts",
+                signal_columns=["ch_a", "unit"],
+                unit_column="unit",
+            )
+
+    def test_stacked_unit_column_is_optional(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(csv_format="stacked")
+        assert req.unit_column is None
+        assert req.datetime_column is None
+
+    def test_wide_no_unit_column_defaults_to_none(self):
+        from app.domain.signal.schemas import ProcessSignalRequest
+
+        req = ProcessSignalRequest(
+            csv_format="wide",
+            time_column="ts",
+            signal_columns=["val"],
+        )
+        assert req.unit_column is None

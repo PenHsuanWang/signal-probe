@@ -153,11 +153,25 @@ class SignalService:
                 raise KeyError(f"signal_columns not found in file: {bad_sigs}")
             if request.time_column in request.signal_columns:
                 raise ValueError("time_column cannot also appear in signal_columns")
+            if request.unit_column and request.unit_column not in file_cols:
+                raise KeyError(f"unit_column '{request.unit_column}' not found in file")
 
             config_time_col: str | None = request.time_column
             config_sig_cols: list[str] = request.signal_columns
         else:
-            # Stacked format — validate the optional channel filter.
+            # Stacked format — validate datetime_column and unit_column against
+            # file columns, then validate the optional channel filter.
+            if request.datetime_column or request.unit_column:
+                df_head = _load_raw_dataframe(signal.file_path).head(1)
+                file_cols = set(df_head.columns)
+                if request.datetime_column and request.datetime_column not in file_cols:
+                    raise KeyError(
+                        f"datetime_column '{request.datetime_column}' not found in file"
+                    )
+                if request.unit_column and request.unit_column not in file_cols:
+                    raise KeyError(
+                        f"unit_column '{request.unit_column}' not found in file"
+                    )
             if request.stacked_channel_filter:
                 _, available_names = ColumnInspector().detect_csv_format(
                     signal.file_path
@@ -192,6 +206,8 @@ class SignalService:
                 if request.csv_format == "wide"
                 else None,
                 stacked_channel_filter=request.stacked_channel_filter,
+                datetime_column=request.datetime_column,
+                unit_column=request.unit_column,
             )
         )
         _background_tasks.add(task)
@@ -294,6 +310,15 @@ class SignalService:
                 ChannelMacroData(channel_name=ch_name, y=ch_y, states=ch_states)
             )
 
+        # Collect per-channel unit strings stored as __unit_<channel_name> columns.
+        channel_units: dict[str, str] = {}
+        for ch_name in channel_names:
+            unit_key = f"__unit_{ch_name}"
+            if unit_key in df.columns:
+                raw_unit = df[unit_key][0]
+                if raw_unit is not None:
+                    channel_units[ch_name] = str(raw_unit)
+
         run_bounds = [
             RunBound(
                 run_id=r.id,
@@ -311,6 +336,7 @@ class SignalService:
             channels=channel_data,
             runs=run_bounds,
             t0_epoch_s=t0_epoch_s,
+            channel_units=channel_units,
         )
 
     # ── Run chunks ──────────────────────────────────────────────────────────
