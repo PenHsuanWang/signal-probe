@@ -494,7 +494,7 @@ class TestClassifierNullSafety:
         states = classify(values)
         assert len(states) == 5
         # None positions are classified (not raised)
-        valid_states = {"IDLE", "ACTIVE", "OOC"}
+        valid_states = {"IDLE", "ACTIVE"}
         assert all(s in valid_states for s in states)
 
     def test_none_positions_classified_as_idle(self):

@@ -142,12 +142,11 @@ export default function SignalsPage() {
 
       {/* Signal table */}
       <div className="rounded-lg overflow-hidden" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
-        <div className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-2.5 text-[10px] font-sans font-semibold uppercase tracking-wide"
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_110px_90px_80px] gap-3 px-4 py-2.5 text-[10px] font-sans font-semibold uppercase tracking-wide"
              style={{ borderBottom: '1px solid var(--sp-border)', color: 'var(--sp-text-tertiary)' }}>
           <span>Filename</span>
           <span>Channels</span>
           <span>Runs</span>
-          <span>OOC</span>
           <span>Status</span>
           <span>Uploaded</span>
           <span>Actions</span>
@@ -165,7 +164,7 @@ export default function SignalsPage() {
             {filtered.map((s) => (
               <div
                 key={s.id}
-                className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_60px_110px_90px_80px] gap-3 px-4 py-3 hover:bg-zinc-800/20 transition-colors items-center"
+                className="grid grid-cols-[minmax(0,2fr)_minmax(120px,1fr)_60px_110px_90px_80px] gap-3 px-4 py-3 hover:bg-zinc-800/20 transition-colors items-center"
               >
                 {/* Filename / Rename inline */}
                 <div className="min-w-0">
@@ -206,10 +205,6 @@ export default function SignalsPage() {
 
                 <span className="text-xs font-mono" style={{ color: 'var(--sp-text-secondary)' }}>
                   {s.status === 'COMPLETED' ? `${s.active_run_count}r` : '—'}
-                </span>
-                <span className={`text-xs font-mono ${s.ooc_count > 0 ? 'text-red-400' : ''}`}
-                      style={s.ooc_count > 0 ? {} : { color: 'var(--sp-text-secondary)' }}>
-                  {s.status === 'COMPLETED' ? s.ooc_count : '—'}
                 </span>
                 <div><StatusBadge status={s.status} /></div>
                 <span className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>

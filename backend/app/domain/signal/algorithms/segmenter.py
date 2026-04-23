@@ -1,4 +1,4 @@
-"""ActiveRunSegmenter: groups consecutive ACTIVE/OOC samples into Run objects.
+"""ActiveRunSegmenter: groups consecutive ACTIVE samples into Run objects.
 
 Pure Python + NumPy. No framework imports (Domain Layer rule).
 """
@@ -23,7 +23,6 @@ class RawRun:
     value_min: float
     value_mean: float
     value_variance: float
-    ooc_count: int
     x: list[float]
     y: list[float]
     states: list[str]
@@ -34,8 +33,8 @@ def segment(
     values: list[float],
     states: list[str],
 ) -> list[RawRun]:
-    """Return a list of RawRun objects for every continuous ACTIVE/OOC block."""
-    active_states = {SignalState.ACTIVE.value, SignalState.OOC.value}
+    """Return a list of RawRun objects for every continuous ACTIVE block."""
+    active_states = {SignalState.ACTIVE.value}
     n = len(timestamps)
     runs: list[RawRun] = []
     run_index = 0
@@ -66,7 +65,6 @@ def segment(
                     value_min=float(np.min(arr)),
                     value_mean=float(np.mean(arr)),
                     value_variance=float(np.var(arr)),
-                    ooc_count=rs.count(SignalState.OOC.value),
                     x=rx,
                     y=ry,
                     states=rs,

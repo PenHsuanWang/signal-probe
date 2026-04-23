@@ -23,9 +23,6 @@ class SignalMetadata(Base):
     active_run_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    ooc_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
     # JSON-encoded list of channel names, e.g. '["value"]' or '["temp","pressure"]'
     channel_names: Mapped[str | None] = mapped_column(Text, nullable=True)
     # User-selected column configuration (AWAITING_CONFIG → PENDING transition)
@@ -51,9 +48,6 @@ class RunSegment(Base):
     value_min: Mapped[float | None] = mapped_column(Double, nullable=True)
     value_mean: Mapped[float | None] = mapped_column(Double, nullable=True)
     value_variance: Mapped[float | None] = mapped_column(Double, nullable=True)
-    ooc_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
 
     signal: Mapped["SignalMetadata"] = relationship(
         "SignalMetadata", back_populates="runs"

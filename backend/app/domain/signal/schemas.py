@@ -16,7 +16,6 @@ class SignalMetadataResponse(BaseModel):
     status: ProcessingStatus
     total_points: int | None
     active_run_count: int
-    ooc_count: int
     error_message: str | None
     channel_names: list[str] = Field(default_factory=list)
     time_column: str | None = None
@@ -147,7 +146,6 @@ class RunBound(BaseModel):
     run_index: int
     start_x: float
     end_x: float
-    ooc_count: int
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -190,6 +188,5 @@ class RunChunkResponse(BaseModel):
     value_min: float | None
     value_mean: float | None
     value_variance: float | None
-    ooc_count: int
     x: list[float]
     channels: list[ChannelChunkData]

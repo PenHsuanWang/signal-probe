@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { Plot } from '../lib/plot';
 import type { MacroViewResponse, RunBound } from '../types/signal';
-import { buildChartTheme, OOC_MARKER } from '../lib/chartTheme';
+import { buildChartTheme } from '../lib/chartTheme';
 import type { Theme } from '../context/ThemeContext';
 
 /** Single high-contrast dark-blue used for all channel lines. */
@@ -62,8 +62,6 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
   const traces = useMemo((): Plotly.Data[] =>
     channels.flatMap((ch, i) => {
       const yaxisKey = i === 0 ? 'y' : `y${i + 1}`;
-      const oocX = xValues.filter((_, j) => ch.states[j] === 'OOC');
-      const oocY = ch.y.filter((_, j) => ch.states[j] === 'OOC');
       return [
         {
           x: xValues, y: ch.y, type: 'scattergl', mode: 'lines',
@@ -71,13 +69,6 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
           line: { color: SERIES_COLOR, width: 1.5 },
           hovertemplate: `%{y:.4g}<extra>${ch.channel_name}</extra>`,
         } as Plotly.Data,
-        ...(oocX.length > 0 ? [{
-          x: oocX, y: oocY, type: 'scattergl', mode: 'markers',
-          name: `${ch.channel_name} OOC`, xaxis: 'x', yaxis: yaxisKey,
-          showlegend: false,
-          marker: OOC_MARKER,
-          hoverinfo: 'skip',
-        } as Plotly.Data] : []),
       ];
     }),
     [channels, xValues],
@@ -95,9 +86,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
         yref: (i === 0 ? 'y domain' : `y${i + 1} domain`) as Plotly.Shape['yref'],
         x0: toXValue(r.start_x), x1: toXValue(r.end_x),
         y0: 0, y1: 1,
-        fillcolor: r.ooc_count > 0
-          ? 'rgba(214,39,40,0.08)'
-          : 'rgba(44,160,44,0.06)',
+        fillcolor: 'rgba(44,160,44,0.06)',
         line: { width: 0 },
         layer: 'below' as const,
       }))

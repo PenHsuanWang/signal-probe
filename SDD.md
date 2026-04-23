@@ -363,7 +363,7 @@ async def run_pipeline(
 | `timestamp_s` | Float64 | Elapsed seconds from first point |
 | `t0_epoch_s` | Float64 (constant) | Unix epoch of first point; absent for numeric time axis |
 | `<channel_name>` | Float64 | Signal values |
-| `<channel_name>_state` | Utf8 | IDLE / ACTIVE / OOC per point |
+| `<channel_name>_state` | Utf8 | IDLE / ACTIVE per point |
 | `__unit_<channel_name>` | Utf8 (constant) | Unit string; absent when no unit column selected |
 
 ---
@@ -799,7 +799,7 @@ The processed Parquet written by the pipeline gains optional `__unit_<channel_na
 | `timestamp_s` | `Float64` | ✅ | Elapsed seconds from first data point |
 | `t0_epoch_s` | `Float64` | Only for temporal time columns | Unix epoch of first point |
 | `<channel_name>` | `Float64` | ✅ | Signal values for this channel |
-| `<channel_name>_state` | `Utf8` | ✅ | `IDLE` / `ACTIVE` / `OOC` per point |
+| `<channel_name>_state` | `Utf8` | ✅ | `IDLE` / `ACTIVE` per point |
 | `__unit_<channel_name>` | `Utf8` | Only when `unit_column` was configured | Constant unit string, same value every row |
 
 **Design rationale:** Storing units as constant columns in the Parquet (rather than Parquet metadata/schema-level key-value pairs) keeps the read path simple: `df["__unit_signal_1"][0]` always returns the unit string without parsing custom metadata blobs.

@@ -6,7 +6,7 @@ export type ProcessingStatus =
   | "PROCESSING"
   | "COMPLETED"
   | "FAILED";
-export type SignalState = "IDLE" | "ACTIVE" | "OOC";
+export type SignalState = "IDLE" | "ACTIVE";
 
 export interface SignalMetadata {
   id: string;
@@ -14,7 +14,6 @@ export interface SignalMetadata {
   status: ProcessingStatus;
   total_points: number | null;
   active_run_count: number;
-  ooc_count: number;
   error_message: string | null;
   channel_names: string[];
   /** Populated after the user selects a column config (EPIC-FLX) */
@@ -70,7 +69,6 @@ export interface RunBound {
   run_index: number;
   start_x: number;
   end_x: number;
-  ooc_count: number;
 }
 
 // ── Multi-channel ────────────────────────────────────────────────────────────
@@ -113,7 +111,6 @@ export interface RunChunkResponse {
   value_min: number | null;
   value_mean: number | null;
   value_variance: number | null;
-  ooc_count: number;
   x: number[];
   channels: ChannelChunkData[];
 }
