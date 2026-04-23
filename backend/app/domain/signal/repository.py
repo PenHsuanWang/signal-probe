@@ -71,7 +71,6 @@ class SignalRepository:
         status: ProcessingStatus,
         total_points: int | None = None,
         active_run_count: int | None = None,
-        ooc_count: int | None = None,
         processed_file_path: str | None = None,
         error_message: str | None = None,
         channel_names: list[str] | None = None,
@@ -81,8 +80,6 @@ class SignalRepository:
             values["total_points"] = total_points
         if active_run_count is not None:
             values["active_run_count"] = active_run_count
-        if ooc_count is not None:
-            values["ooc_count"] = ooc_count
         if processed_file_path is not None:
             values["processed_file_path"] = processed_file_path
         if error_message is not None:
@@ -146,7 +143,6 @@ class SignalRepository:
                 error_message=None,
                 total_points=None,
                 active_run_count=0,
-                ooc_count=0,
                 updated_at=func.now(),
             )
         )
@@ -169,7 +165,6 @@ class SignalRepository:
                 value_min=r.value_min,
                 value_mean=r.value_mean,
                 value_variance=r.value_variance,
-                ooc_count=r.ooc_count,
             )
             for r in raw_runs
         ]

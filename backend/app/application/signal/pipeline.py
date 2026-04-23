@@ -556,13 +556,11 @@ async def run_pipeline(
 
             await repo.create_runs(signal_id, raw_runs)
 
-            total_ooc = sum(r.ooc_count for r in raw_runs)
             await repo.update_signal_processing(
                 signal_id,
                 status=ProcessingStatus.COMPLETED,
                 total_points=len(timestamps),
                 active_run_count=len(raw_runs),
-                ooc_count=total_ooc,
                 processed_file_path=processed_abs,
                 channel_names=channel_names,
             )
