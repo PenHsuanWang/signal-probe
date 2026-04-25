@@ -4,6 +4,29 @@ This module has ZERO framework imports (no FastAPI, SQLAlchemy, Polars).
 It accepts plain NumPy arrays and domain value objects, and returns
 dataclass results.  This satisfies Clean Architecture: the domain layer
 depends only on standard scientific libraries (numpy, scipy).
+
+Performance design
+------------------
+``compute_spectrogram`` is designed for maximum throughput on large signals:
+
+1. **Pre-selection** — when the natural frame count exceeds
+   ``_MAX_SPECTROGRAM_BINS``, only the 2,000 frames that survive downsampling
+   are computed.  This reduces work from O(all_frames) to O(2000) for large
+   datasets and is the single biggest speedup for high-resolution signals.
+
+2. **Vectorised frame matrix** — instead of a Python ``for``-loop, all frames
+   are assembled in one NumPy advanced-indexing call
+   ``signal[starts[:, None] + arange(size)]``, producing a 2-D
+   ``(n_frames, window_size)`` array that is processed by a single FFT call.
+
+3. **Multi-threaded FFT** — ``scipy.fft.rfft(windowed, axis=1, workers=-1)``
+   invokes pocketfft with all available CPU threads, saturating every core for
+   large transform sizes (≥ 32 k samples per the SciPy documentation).
+
+These functions are designed to be called via
+``asyncio.get_running_loop().run_in_executor(ProcessPoolExecutor, fn, ...)``
+(see ``stft_service.py``), which offloads the entire computation to a worker
+process and keeps the event loop fully non-blocking.
 """
 
 from __future__ import annotations
@@ -11,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import numpy.fft as npfft
+import scipy.fft as _scipy_fft
 from scipy.signal import get_window  # type: ignore[import-untyped]
 
 from app.domain.analysis.schemas import SpectrogramConfig, STFTWindowConfig
@@ -83,8 +106,8 @@ def compute_stft(
     win = get_window(config.window_fn.value, size)
     windowed = segment * win
 
-    spectrum = npfft.rfft(windowed)
-    freqs = npfft.rfftfreq(size, d=1.0 / sampling_rate_hz)
+    spectrum = _scipy_fft.rfft(windowed, workers=-1)
+    freqs = _scipy_fft.rfftfreq(size, d=1.0 / sampling_rate_hz)
     mags = np.abs(spectrum)
 
     dominant = float(freqs[int(np.argmax(mags))]) if mags.max() > 0 else None
@@ -134,38 +157,53 @@ def compute_spectrogram(
         )
 
     win = get_window(config.window_fn.value, size)
-    n_freqs = size // 2 + 1
 
-    # Pre-compute frame start indices.
+    # All valid frame start indices for the full signal.
     starts = np.arange(0, n_signal - size + 1, hop, dtype=np.intp)
     n_times = len(starts)
 
-    spectrogram = np.zeros((n_times, n_freqs), dtype=np.float64)
-    sig_f64 = signal.astype(np.float64)
-
-    for i, s in enumerate(starts):
-        frame = sig_f64[s : s + size] * win
-        spectrogram[i] = np.abs(npfft.rfft(frame))
-
-    freqs = npfft.rfftfreq(size, d=1.0 / sampling_rate_hz)
-    # Centre of each frame in seconds.
-    time_bins = (starts + size // 2) / sampling_rate_hz
-
-    # dBFS: normalise to peak magnitude then convert to decibels.
-    peak = spectrogram.max()
-    if peak > 0:
-        db_matrix = 20.0 * np.log10(spectrogram / peak + _EPSILON)
-    else:
-        db_matrix = np.full_like(spectrogram, 20.0 * np.log10(_EPSILON))
-
-    # Uniform downsampling when the time axis exceeds the display cap.
+    # ── Pre-selection optimisation ───────────────────────────────────────────
+    # When the natural frame count exceeds the display cap we will downsample
+    # the time axis.  Rather than computing ALL frames and then discarding
+    # most of them, we pre-select only the _MAX_SPECTROGRAM_BINS frames that
+    # will appear in the output.  For a 10 M-sample signal with hop_size=1
+    # this reduces work from ~10 million FFTs to exactly 2,000 — a 5000×
+    # speedup before any other optimisation applies.
     downsampled = n_times > _MAX_SPECTROGRAM_BINS
     if downsampled:
-        idx = np.round(np.linspace(0, n_times - 1, _MAX_SPECTROGRAM_BINS)).astype(
-            np.intp
-        )
-        db_matrix = db_matrix[idx]
-        time_bins = time_bins[idx]
+        selected_idx = np.round(
+            np.linspace(0, n_times - 1, _MAX_SPECTROGRAM_BINS)
+        ).astype(np.intp)
+        active_starts = starts[selected_idx]
+    else:
+        active_starts = starts
+
+    sig_f64 = signal.astype(np.float64)
+
+    # ── Vectorised frame matrix ──────────────────────────────────────────────
+    # Build shape (n_active, window_size) frame matrix via advanced indexing.
+    # Each row is one analysis frame; no Python loop required.
+    frame_indices = (
+        active_starts[:, np.newaxis] + np.arange(size, dtype=np.intp)[np.newaxis, :]
+    )
+    windowed = sig_f64[frame_indices] * win[np.newaxis, :]
+
+    # ── Multi-threaded FFT ───────────────────────────────────────────────────
+    # scipy.fft.rfft with workers=-1 dispatches pocketfft threads equal to
+    # os.cpu_count(), saturating all available cores for transform sizes ≥ 32k.
+    magnitudes = np.abs(
+        _scipy_fft.rfft(windowed, axis=1, workers=-1)
+    )  # shape: (n_active, n_freqs)
+
+    freqs = _scipy_fft.rfftfreq(size, d=1.0 / sampling_rate_hz)
+    time_bins = (active_starts + size // 2) / sampling_rate_hz
+
+    # dBFS: normalise to peak magnitude across the entire output matrix.
+    peak = magnitudes.max()
+    if peak > 0:
+        db_matrix = 20.0 * np.log10(magnitudes / peak + _EPSILON)
+    else:
+        db_matrix = np.full_like(magnitudes, 20.0 * np.log10(_EPSILON))
 
     return SpectrogramResult(
         time_bins_s=time_bins,

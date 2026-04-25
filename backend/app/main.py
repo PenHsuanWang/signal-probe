@@ -1,4 +1,5 @@
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request
@@ -9,10 +10,22 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.infrastructure.executor import start_executor, stop_executor
 from app.presentation.api.v1.router import api_router
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start the process-pool executor before serving; shut it down cleanly."""
+    start_executor()
+    yield
+    stop_executor()
+
+
 app = FastAPI(
-    title=settings.PROJECT_NAME, openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
