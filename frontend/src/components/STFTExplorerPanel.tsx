@@ -28,6 +28,20 @@ export default function STFTExplorerPanel({
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
 
+  // When the signal has an absolute start time, use a date axis (same as
+  // MultiChannelMacroChart) so both charts display the same x-axis format.
+  const hasDateAxis = macroData.t0_epoch_s != null;
+  const t0 = macroData.t0_epoch_s ?? 0;
+
+  const toDateStr = useCallback(
+    (elapsedS: number) => new Date((t0 + elapsedS) * 1000).toISOString(),
+    [t0],
+  );
+  const fromDateStr = useCallback(
+    (d: string | number) => new Date(String(d)).getTime() / 1000 - t0,
+    [t0],
+  );
+
   const {
     state,
     windowSize,
@@ -56,9 +70,10 @@ export default function STFTExplorerPanel({
 
   const explorationTraces = useMemo((): Plotly.Data[] => {
     if (!channelData) return [];
+    const xValues = hasDateAxis ? macroData.x.map(toDateStr) : macroData.x;
     return [
       {
-        x: macroData.x,
+        x: xValues,
         y: channelData.y,
         type: 'scattergl',
         mode: 'lines+markers',
@@ -69,15 +84,15 @@ export default function STFTExplorerPanel({
         unselected: { marker: { opacity: 0 } },
       } as Plotly.Data,
     ];
-  }, [channelData, macroData.x, activeChannel]);
+  }, [channelData, macroData.x, activeChannel, hasDateAxis, toDateStr]);
 
   const brushShape = useMemo((): Partial<Plotly.Shape>[] => {
     if (!state.window) return [];
     return [
       {
         type: 'rect',
-        x0: state.window.start_s,
-        x1: state.window.end_s,
+        x0: hasDateAxis ? toDateStr(state.window.start_s) : state.window.start_s,
+        x1: hasDateAxis ? toDateStr(state.window.end_s) : state.window.end_s,
         y0: 0,
         y1: 1,
         xref: 'x',
@@ -87,7 +102,7 @@ export default function STFTExplorerPanel({
         layer: 'above',
       },
     ];
-  }, [state.window]);
+  }, [state.window, hasDateAxis, toDateStr]);
 
   const explorationLayout = useMemo((): Partial<Plotly.Layout> => {
     const base = buildChartTheme(theme);
@@ -99,10 +114,11 @@ export default function STFTExplorerPanel({
       shapes: brushShape as Plotly.Shape[],
       selectdirection: 'h',
       xaxis: {
+        ...(hasDateAxis ? { type: 'date' } : {}),
         color: axisColor,
         gridcolor: gridColor,
         title: {
-          text: 'Time (s)',
+          text: hasDateAxis ? 'Date / Time' : 'Time (s)',
           font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
         },
         tickfont: { size: 9, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
@@ -111,7 +127,9 @@ export default function STFTExplorerPanel({
         linecolor: axisColor,
         linewidth: 1,
         showline: true,
-        ...(xRange ? { range: xRange } : {}),
+        ...(xRange && hasDateAxis
+          ? { range: [toDateStr(xRange[0]), toDateStr(xRange[1])] }
+          : xRange ? { range: xRange } : {}),
       },
       yaxis: {
         color: axisColor,
@@ -125,14 +143,16 @@ export default function STFTExplorerPanel({
       },
     };
     return l as Partial<Plotly.Layout>;
-  }, [theme, brushShape, axisColor, gridColor, xRange]);
+  }, [theme, brushShape, axisColor, gridColor, xRange, hasDateAxis, toDateStr]);
 
   const handleSelected = useCallback(
     (event: Readonly<Plotly.PlotSelectionEvent>) => {
       const rx = event?.range?.x;
       if (!rx || rx.length < 2) return;
-      const start = Number(rx[0]);
-      const end = Number(rx[1]);
+      // When the x-axis is a date axis, Plotly returns ISO strings; convert back
+      // to elapsed seconds before passing to the backend.
+      const start = hasDateAxis ? fromDateStr(rx[0]) : Number(rx[0]);
+      const end = hasDateAxis ? fromDateStr(rx[1]) : Number(rx[1]);
       if (isNaN(start) || isNaN(end) || end <= start) return;
       if (state.channel === null && channelNames[0]) {
         selectChannel(channelNames[0]);
@@ -152,10 +172,15 @@ export default function STFTExplorerPanel({
       const r0 = ev['xaxis.range[0]'];
       const r1 = ev['xaxis.range[1]'];
       if (r0 !== undefined && r1 !== undefined) {
-        onXRangeChange([r0 as number, r1 as number]);
+        // Date axis: Plotly returns ISO strings; convert back to elapsed seconds.
+        const x0 = hasDateAxis ? fromDateStr(r0 as string) : Number(r0);
+        const x1 = hasDateAxis ? fromDateStr(r1 as string) : Number(r1);
+        if (!isNaN(x0) && !isNaN(x1)) {
+          onXRangeChange([x0, x1]);
+        }
       }
     },
-    [onXRangeChange],
+    [onXRangeChange, hasDateAxis, fromDateStr],
   );
 
   const totalDuration =

@@ -116,24 +116,43 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
     ? result.frequencies_hz[1] - result.frequencies_hz[0]
     : 0;
 
+  // Adaptive formatter for Hz values that may span many orders of magnitude.
+  // Keeps 4 significant figures across the range 1e-9 Hz → 1e9 Hz.
+  const fmtHz = (hz: number): string => {
+    if (hz === 0) return '0 Hz';
+    const abs = Math.abs(hz);
+    if (abs >= 1000) return `${(hz / 1000).toFixed(2)} kHz`;
+    if (abs >= 1) return `${hz.toFixed(3)} Hz`;
+    if (abs >= 1e-3) return `${(hz * 1000).toFixed(3)} mHz`;
+    return `${hz.toExponential(3)} Hz`;
+  };
+
+  const durationS = result.window_config.end_s - result.window_config.start_s;
+  const durationStr =
+    durationS >= 3600
+      ? `${(durationS / 3600).toFixed(2)} h`
+      : durationS >= 60
+        ? `${(durationS / 60).toFixed(2)} min`
+        : `${durationS.toFixed(1)} s`;
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-1 pb-1 text-[10px] font-mono"
            style={{ color: 'var(--sp-text-tertiary)' }}>
         <span>
           <span style={{ color: 'var(--sp-text-secondary)' }}>{result.window_config.window_size}</span> samples
-          @ <span style={{ color: 'var(--sp-text-secondary)' }}>{result.sampling_rate_hz.toFixed(0)}</span> Hz
+          @ <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(result.sampling_rate_hz)}</span>
         </span>
         <span>
           Duration: <span style={{ color: 'var(--sp-text-secondary)' }}>
-            {((result.window_config.end_s - result.window_config.start_s) * 1000).toFixed(0)}
-          </span> ms
+            {durationStr}
+          </span>
         </span>
         <span>
-          Freq res: <span style={{ color: 'var(--sp-text-secondary)' }}>{freqRes.toFixed(3)}</span> Hz
+          Freq res: <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(freqRes)}</span>
         </span>
         <span className="text-amber-400">
-          Dominant: {result.dominant_frequency_hz != null ? `${result.dominant_frequency_hz.toFixed(2)} Hz` : '—'}
+          Dominant: {result.dominant_frequency_hz != null ? fmtHz(result.dominant_frequency_hz) : '—'}
         </span>
       </div>
       <Plot
