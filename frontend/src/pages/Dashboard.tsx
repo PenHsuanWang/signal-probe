@@ -8,7 +8,9 @@ import FileUploader from '../components/FileUploader';
 import MicroChart from '../components/MicroChart';
 import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
 import StatusBadge from '../components/StatusBadge';
+import STFTExplorerPanel from '../components/STFTExplorerPanel';
 import { getMacroView, getRunChunks, listGroups } from '../lib/api';
+import { useSearchParams } from 'react-router-dom';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
 import { buildChartTheme, scientificColor } from '../lib/chartTheme';
@@ -37,6 +39,7 @@ interface GroupMacroResult {
 export default function Dashboard() {
   const { signals, refresh } = useSignals();
   const { theme } = useTheme();
+  const [searchParams] = useSearchParams();
 
   // ── Signal mode state ──────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'signal' | 'group'>('signal');
@@ -49,6 +52,7 @@ export default function Dashboard() {
   const [runError, setRunError] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
   const [visibleChannels, setVisibleChannels] = useState<Set<string>>(new Set());
+  const [sharedXRange, setSharedXRange] = useState<[number, number] | null>(null);
 
   // ── Group mode state ───────────────────────────────────────────────────────
   const [groups, setGroups] = useState<Group[]>([]);
@@ -63,6 +67,16 @@ export default function Dashboard() {
   useEffect(() => {
     listGroups().then(setGroups).catch(() => {});
   }, []);
+
+  // ── Auto-select signal from URL param ─────────────────────────────────────
+  useEffect(() => {
+    const sigId = searchParams.get('signalId');
+    if (sigId && signals.some((s) => s.id === sigId && s.status === 'COMPLETED')) {
+      setSelectedId(sigId);
+      setViewMode('signal');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // ── Sync signal visibleChannels when macroData changes ────────────────────
   useEffect(() => {
@@ -494,6 +508,18 @@ export default function Dashboard() {
             )
           )}
         </div>
+      )}
+
+      {/* ── Signal: STFT Explorer ──────────────────────────────────────── */}
+      {viewMode === 'signal' && selectedSignal?.status === 'COMPLETED' && macroData && (
+        <STFTExplorerPanel
+          signalId={selectedSignal.id}
+          channelNames={selectedSignal.channel_names ?? []}
+          macroData={macroData}
+          theme={theme}
+          xRange={sharedXRange}
+          onXRangeChange={(r) => setSharedXRange(r)}
+        />
       )}
 
       {/* ── Group: aligned stacked view ────────────────────────────────── */}

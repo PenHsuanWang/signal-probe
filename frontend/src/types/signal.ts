@@ -151,3 +151,61 @@ export interface GroupMemberUpsert {
   channel_colors?: Record<string, string>;
   time_offset_s?: number;
 }
+
+// ── STFT Analysis (Feature 8) ─────────────────────────────────────────────────
+
+export type WindowFunction =
+  | 'hann'
+  | 'hamming'
+  | 'blackman'
+  | 'blackmanharris'
+  | 'nuttall'
+  | 'flattop'
+  | 'boxcar'
+  | 'triang'
+  | 'bartlett'
+  | 'bartlett_hann'
+  | 'bohman'
+  | 'cosine'
+  | 'lanczos'
+  | 'tukey'
+  | 'exponential';
+
+export interface STFTWindowConfig {
+  start_s: number;
+  end_s: number;
+  window_fn: WindowFunction;
+  window_size: number;
+}
+
+export interface STFTResponse {
+  signal_id: string;
+  channel_name: string;
+  frequencies_hz: number[];
+  magnitudes: number[];
+  dominant_frequency_hz: number;
+  window_config: STFTWindowConfig;
+  sampling_rate_hz: number;
+}
+
+export interface SpectrogramResponse {
+  signal_id: string;
+  channel_name: string;
+  time_bins_s: number[];
+  frequency_bins_hz: number[];
+  magnitude_db: number[][];
+  sampling_rate_hz: number;
+  downsampled: boolean;
+}
+
+export interface ExplorationWindow {
+  start_s: number;
+  end_s: number;
+}
+
+export type ExplorationPhase =
+  | 'idle'
+  | 'exploring'
+  | 'locked'
+  | 'generating'
+  | 'spectrogram_ready';

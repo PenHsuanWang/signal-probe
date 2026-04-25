@@ -1,9 +1,9 @@
 # Software Design Document
 
 **Product:** signal-probe
-**Feature:** User-Configurable X-Axis Datetime Column & Signal Unit Mapping
+**Feature:** Interactive STFT Parameter Exploration & Spectrogram Generation
 **Version:** 1.0
-**Date:** 2026-04-23
+**Date:** 2026-04-25
 **Status:** Draft
 **Related SRS:** `SRS.md`
 
@@ -15,16 +15,15 @@
 2. [System Architecture (HLD)](#2-system-architecture-hld)
 3. [Domain-Driven Design Mapping](#3-domain-driven-design-mapping)
 4. [Component Design (LLD)](#4-component-design-lld)
-   - [4.1 Backend — Schema Layer](#41-backend--schema-layer)
-   - [4.2 Backend — Domain Layer](#42-backend--domain-layer)
-   - [4.3 Backend — Application Layer: Column Inspector](#43-backend--application-layer-column-inspector)
-   - [4.4 Backend — Application Layer: Pipeline](#44-backend--application-layer-pipeline)
-   - [4.5 Backend — Application Layer: Service](#45-backend--application-layer-service)
-   - [4.6 Backend — Presentation Layer: API Endpoint](#46-backend--presentation-layer-api-endpoint)
-   - [4.7 Frontend — Type Definitions](#47-frontend--type-definitions)
-   - [4.8 Frontend — Hook: useColumnConfig](#48-frontend--hook-usecolumnconfig)
-   - [4.9 Frontend — Component: ColumnConfigPanel](#49-frontend--component-columnconfigpanel)
-   - [4.10 Frontend — Component: MultiChannelMacroChart](#410-frontend--component-multichannelmacrochart)
+   - [4.1 Backend — No New Endpoints Required](#41-backend--no-new-endpoints-required)
+   - [4.2 Frontend — Type Definitions](#42-frontend--type-definitions)
+   - [4.3 Frontend — Hook: useSTFTExplorer](#43-frontend--hook-usestftexplorer)
+   - [4.4 Frontend — Component: STFTExplorerPanel](#44-frontend--component-stftexplorerpanel)
+   - [4.5 Frontend — Component: FFTSpectrumChart](#45-frontend--component-fftspectrumchart)
+   - [4.6 Frontend — Component: SpectrogramChart](#46-frontend--component-spectrogramchart)
+   - [4.7 Frontend — Component: STFTParamControls](#47-frontend--component-stftparamcontrols)
+   - [4.8 Frontend — lib/api.ts additions](#48-frontend--libapts-additions)
+   - [4.9 Frontend — SignalsPage integration](#49-frontend--signalspage-integration)
 5. [Data Design](#5-data-design)
 6. [API Contracts](#6-api-contracts)
 7. [UI & Interaction Design](#7-ui--interaction-design)
@@ -36,80 +35,82 @@
 
 ### 1.1 Purpose
 
-This document defines the technical design required to implement two enhancements to the signal-probe column configuration step:
+This document defines the technical design for the **Interactive STFT Parameter Exploration & Spectrogram Generation** feature (Feature 8). The feature adds a self-contained exploration view to signal-probe's signal detail page that lets analysts:
 
-1. **Datetime Column Selection (Stacked Format):** Allow users to explicitly choose which temporal column is used as the x-axis when processing stacked/long-format CSVs, replacing the current hardcoded alias-based detection.
-2. **Unit Column Mapping (Both Formats):** Allow users to optionally select a string-typed column whose values name the physical measurement unit per channel. Those units are stored in the processed Parquet and surfaced in the macro-view chart as y-axis titles.
+1. **Brush-select** a time window on the macro chart to drive a live FFT preview.
+2. **Lock** the validated window size and configure the overlap ratio.
+3. **Generate** a full-signal STFT spectrogram rendered as a synchronized, high-contrast heatmap.
 
 ### 1.2 System Boundaries
 
 **In scope:**
-- `ProcessSignalRequest` schema — add `datetime_column` and `unit_column` fields.
-- `MacroViewResponse` schema — add `channel_units` field.
-- `_read_stacked_signal_file` — accept an explicit `datetime_col` parameter.
-- `_extract_channel_units` — new pipeline helper.
-- `SignalService.process_signal` — validate and pass new fields to pipeline.
-- `useColumnConfig` hook — manage new state (`datetimeCol`, `unitCol`).
-- `ColumnConfigPanel` — render datetime selector for stacked format, unit column selector for both formats.
-- `MultiChannelMacroChart` — apply `channel_units` to y-axis titles.
+- New frontend components: `STFTExplorerPanel`, `FFTSpectrumChart`, `SpectrogramChart`, `STFTParamControls`.
+- New frontend hook: `useSTFTExplorer` (state machine for the four-phase workflow).
+- `lib/api.ts` additions: `fetchSTFT` and `fetchSpectrogram` helper functions.
+- Integration into `SignalsPage.tsx`: exploration view mounted below the macro chart for `COMPLETED` signals.
+- Plotly brush interaction wiring in the exploration time-series chart.
+- Synchronized x-axis range between macro chart and spectrogram.
 
 **Out of scope:**
-- Time-unit multiplier for numeric time columns.
-- Storing `channel_units` in the SQL `signal_metadata` table.
-- Exposing `channel_units` in `RunChunkResponse`.
-- Post-processing unit editing.
+- Backend changes: the existing `GET /signals/{id}/analysis/stft` and `GET /signals/{id}/analysis/spectrogram` endpoints are consumed as-is.
+- Database schema changes.
+- Any modification to the upload/configure/macro workflow.
+- Multi-channel simultaneous STFT, data denoising, 3D waterfall, peak detection (see SRS §4).
 
 ### 1.3 Stakeholders
 
 | Role | Interest |
 |---|---|
-| Data analysts | Correct x-axis labels; unit labels on y-axes |
-| Data engineers | Reliable column mapping without file pre-editing |
-| Frontend developers | New hook state, new UI sub-components |
-| Backend developers | Pipeline and schema changes |
+| Data scientists | Visual STFT parameter exploration; synchronized spectrogram |
+| Frontend developers | New hook, new components, Plotly brush integration |
+| Backend developers | Confirmation that existing analysis endpoints are sufficient |
 
 ---
 
 ## 2. System Architecture (HLD)
 
-signal-probe uses a layered architecture:
+Feature 8 is **entirely a frontend extension**. The backend STFT engine, service, and API endpoints introduced in Feature 6 already provide all the computation needed. The new work sits exclusively in the React/Plotly presentation layer.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Frontend (React 19 + Vite + Tailwind v4)                       │
-│  ┌──────────────────────┐   ┌───────────────────────────────┐   │
-│  │  ColumnConfigPanel   │   │  MultiChannelMacroChart       │   │
-│  │  (upload step)       │   │  (viz step)                   │   │
-│  └──────────┬───────────┘   └──────────────┬────────────────┘   │
-│             │ POST /process                  │ GET /macro         │
-└─────────────┼──────────────────────────────┼────────────────────┘
-              │                               │
-┌─────────────▼───────────────────────────────▼────────────────────┐
-│  FastAPI  (Presentation Layer)                                    │
-│  POST /signals/{id}/process     GET /signals/{id}/macro           │
-└─────────────┬───────────────────────────────┬────────────────────┘
-              │                               │
-┌─────────────▼──────────────┐  ┌─────────────▼────────────────────┐
-│  SignalService              │  │  SignalService.get_macro_view     │
-│  (Application Layer)        │  │  reads processed Parquet          │
-│  - validate columns         │  │  - extracts channel_units         │
-│  - queue pipeline task      │  │  - returns MacroViewResponse      │
-└─────────────┬───────────────┘  └──────────────────────────────────┘
-              │
-┌─────────────▼──────────────────────────────────────────────────┐
-│  Pipeline (Background Task, Application Layer)                  │
-│  - _read_stacked_signal_file(datetime_col=…)                    │
-│  - _extract_channel_units(unit_col=…)                           │
-│  - writes processed Parquet (timestamp_s, channels, units)      │
-└─────────────┬──────────────────────────────────────────────────┘
-              │
-┌─────────────▼──────────────────────────────────────────────────┐
-│  Storage (local filesystem / IStorageAdapter)                   │
-│  signals/{id}/raw.csv  →  signals/{id}/processed.parquet        │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  SignalsPage.tsx                                                      │
+│                                                                       │
+│  ┌─────────────────────────────┐   ┌───────────────────────────────┐  │
+│  │  MultiChannelMacroChart     │   │  STFTExplorerPanel            │  │
+│  │  (existing — read-only)     │   │  (new — exploration view)     │  │
+│  └─────────────────────────────┘   │                               │  │
+│                                    │  ┌────────────────────────┐   │  │
+│                                    │  │ Exploration chart      │   │  │
+│                                    │  │ (Plotly + brush mode)  │   │  │
+│                                    │  └──────────┬─────────────┘   │  │
+│                                    │             │ brush event      │  │
+│                                    │  ┌──────────▼─────────────┐   │  │
+│                                    │  │ useSTFTExplorer hook   │   │  │
+│                                    │  │ (state machine)        │   │  │
+│                                    │  └────┬──────────┬────────┘   │  │
+│                                    │       │          │             │  │
+│                                    │  ┌────▼──┐  ┌───▼──────────┐ │  │
+│                                    │  │ FFT   │  │ STFTParam    │ │  │
+│                                    │  │Spectrum│  │Controls      │ │  │
+│                                    │  │Chart  │  │(lock/overlap)│ │  │
+│                                    │  └───────┘  └──────┬───────┘ │  │
+│                                    │                    │generate  │  │
+│                                    │  ┌─────────────────▼───────┐ │  │
+│                                    │  │ SpectrogramChart        │ │  │
+│                                    │  │ (Plotly heatmap)        │ │  │
+│                                    │  └─────────────────────────┘ │  │
+│                                    └───────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+                         │ GET /signals/{id}/analysis/stft
+                         │ GET /signals/{id}/analysis/spectrogram
+┌────────────────────────▼─────────────────────────────────────────────┐
+│  FastAPI — Existing analysis endpoints (Feature 6, unchanged)         │
+│  GET /signals/{id}/analysis/stft        → STFTResponse               │
+│  GET /signals/{id}/analysis/spectrogram → SpectrogramResponse        │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key external dependencies:** Polars (data frame processing), FastAPI, SQLAlchemy (async), Plotly.js (chart rendering).
+**Key external dependencies:** Plotly.js (brush/lasso selection, heatmap), React 19, existing `lib/api.ts`, `lib/chartTheme.ts`.
 
 ---
 
@@ -117,871 +118,594 @@ signal-probe uses a layered architecture:
 
 ### 3.1 Bounded Contexts
 
-| Context | Aggregate Root | Relevant to this Feature |
+| Context | Aggregate Root | Relevance to Feature 8 |
 |---|---|---|
-| **Signal Ingestion** | `SignalMetadata` | Stores `datetime_column` and `unit_column` sent by the user |
-| **Signal Processing** | `RunSegment` | Pipeline uses `datetime_column` to build x-axis; derives unit map |
-| **Signal Visualisation** | `MacroViewResponse` (read-model) | Returns `channel_units` to frontend |
+| **Signal Analysis** | `STFTResponse` / `SpectrogramResponse` (read models) | Consumed by the new exploration components; no mutations |
+| **Signal Visualisation** | `MacroViewResponse` | Shared x-axis range synchronized with spectrogram |
 
-### 3.2 New Domain Events
-
-| Event | Trigger | Payload |
-|---|---|---|
-| `SignalProcessingQueued` | `POST /signals/{id}/process` called with valid config | `signal_id`, `datetime_column`, `unit_column`, `csv_format` |
-| `SignalProcessingCompleted` | Pipeline finishes writing Parquet | `signal_id`, `channel_units` resolved map |
-
-### 3.3 New Value Objects
+### 3.2 New Value Objects (Frontend Only)
 
 | Value Object | Location | Description |
 |---|---|---|
-| `ChannelUnitMap` (conceptual) | Pipeline output / Parquet metadata | `{channel_name: str → unit: str}` — immutable once written |
+| `ExplorationWindow` | `useSTFTExplorer` state | `{ start_s: number; end_s: number; sampleCount: number; windowSize: number }` — immutable snapshot of a brush selection. `windowSize` = next power of 2 ≥ `sampleCount`. |
+| `STFTParams` | `useSTFTExplorer` state | `{ windowSize: number; overlapPct: number; hopSize: number; windowFn: WindowFunction }` — the confirmed parameter set sent to the spectrogram endpoint. |
+
+### 3.3 Exploration Phase State Machine
+
+```
+IDLE
+  │  user brushes selection
+  ▼
+EXPLORING ─── brush cleared ──► IDLE
+  │  FFT response received + user clicks "Lock"
+  ▼
+LOCKED ──── user clicks "Unlock" ──► EXPLORING
+  │  user clicks "Generate Spectrogram"
+  ▼
+GENERATING
+  │  SpectrogramResponse received
+  ▼
+SPECTROGRAM_READY ──── user unlocks ──► EXPLORING
+  │  user changes parameters and regenerates
+  ▼
+GENERATING  (loop)
+```
+
+### 3.4 Domain Events (Frontend)
+
+| Event | Trigger | Effect |
+|---|---|---|
+| `BrushUpdated` | Plotly `relayout` with `xaxis.range` in select mode | Debounced FFT call dispatched; `ExplorationWindow` updated |
+| `FFTReceived` | Successful `fetchSTFT` response | FFT spectrum re-rendered; `samplingRateHz` cached |
+| `WindowLocked` | User clicks "Lock Window Size" | Phase transitions to `LOCKED`; `STFTParams.windowSize` frozen |
+| `OverlapChanged` | Slider `onChange` | `hopSize` recalculated; `n_windows` preview updated |
+| `GenerateClicked` | User clicks "Generate Spectrogram" | Phase transitions to `GENERATING`; `fetchSpectrogram` dispatched |
+| `SpectrogramReceived` | Successful `fetchSpectrogram` response | Phase transitions to `SPECTROGRAM_READY`; heatmap rendered |
+| `XRangeChanged` | Plotly `relayout` on either synced chart | Shared `xRange` state updated; both charts re-render with new range |
 
 ---
 
 ## 4. Component Design (LLD)
 
-### 4.1 Backend — Schema Layer
+### 4.1 Backend — No New Endpoints Required
 
-**File:** `backend/app/domain/signal/schemas.py`
+Both analysis endpoints from Feature 6 are already registered and fully functional:
 
-#### 4.1.1 `ProcessSignalRequest` — additions
+| Endpoint | Consumed by Feature 8 for |
+|---|---|
+| `GET /signals/{id}/analysis/stft` | Live FFT spectrum during exploration |
+| `GET /signals/{id}/analysis/spectrogram` | Full spectrogram generation |
 
-```python
-class ProcessSignalRequest(BaseModel):
-    csv_format: Literal["wide", "stacked"] = "wide"
-
-    # ── Wide format ─────────────────────────────────────────────────────────
-    time_column: str | None = Field(None, min_length=1, max_length=255)
-    signal_columns: list[str] | None = None
-
-    # ── Stacked format ──────────────────────────────────────────────────────
-    stacked_channel_filter: list[str] | None = None
-
-    # ── NEW: Stacked format — explicit datetime column ──────────────────────
-    datetime_column: str | None = Field(
-        None,
-        min_length=1,
-        max_length=255,
-        description=(
-            "Name of the temporal column to use as the x-axis for stacked format. "
-            "When omitted the pipeline falls back to alias-based auto-detection."
-        ),
-    )
-
-    # ── NEW: Both formats — optional unit column ────────────────────────────
-    unit_column: str | None = Field(
-        None,
-        min_length=1,
-        max_length=255,
-        description=(
-            "Name of the string column whose values name the physical unit for "
-            "each channel. When omitted no unit labels are applied."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _validate_format_fields(self) -> "ProcessSignalRequest":
-        # … existing wide/stacked validation unchanged …
-
-        # New: unit_column must not collide with time or signal columns
-        if self.unit_column:
-            reserved = set()
-            if self.time_column:
-                reserved.add(self.time_column)
-            if self.datetime_column:
-                reserved.add(self.datetime_column)
-            if self.signal_columns:
-                reserved.update(self.signal_columns)
-            if self.unit_column in reserved:
-                raise ValueError(
-                    "unit_column cannot be the same as the time, datetime, or any signal column"
-                )
-        return self
-```
-
-#### 4.1.2 `MacroViewResponse` — additions
-
-```python
-class MacroViewResponse(BaseModel):
-    signal_id: uuid.UUID
-    x: list[float]
-    channels: list[ChannelMacroData]
-    runs: list[RunBound]
-    t0_epoch_s: float | None = None
-
-    # NEW ─────────────────────────────────────────────────────────────────────
-    channel_units: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Map of channel_name → unit string derived from the user-selected "
-            "unit column. Empty dict when no unit column was configured."
-        ),
-    )
-```
+No backend changes are required.
 
 ---
 
-### 4.2 Backend — Domain Layer
-
-**File:** `backend/app/domain/signal/format_constants.py`
-
-No changes required. `STACKED_COL_ALIASES` and `STACKED_REQUIRED_COLS` remain as-is. The new `datetime_column` field bypasses alias resolution entirely when provided.
-
----
-
-### 4.3 Backend — Application Layer: Column Inspector
-
-**File:** `backend/app/application/signal/column_inspector.py`
-
-No structural changes required. The existing `inspect_columns()` method already returns a `ColumnDescriptor` with `dtype` set to `"string"` for string columns and `"temporal"` for datetime columns, which is all the frontend needs to populate the new selectors.
-
-**Note:** The `detect_csv_format()` method is unchanged. It continues to enumerate `stacked_signal_names` using the existing alias logic. The new `datetime_column` field is supplied by the user and validated server-side in the service layer.
-
----
-
-### 4.4 Backend — Application Layer: Pipeline
-
-**File:** `backend/app/application/signal/pipeline.py`
-
-#### 4.4.1 `_read_stacked_signal_file` — signature change
-
-```python
-def _read_stacked_signal_file(
-    df: pl.DataFrame,
-    channel_filter: list[str] | None = None,
-    datetime_col: str | None = None,      # NEW
-) -> tuple[list[float], dict[str, list[float | None]], float]:
-```
-
-**Behaviour change:**
-- When `datetime_col` is provided, skip `_normalize_stacked_columns` and use the provided column name directly as the pivot index and the source of elapsed-second computation.
-- When `datetime_col` is `None`, the existing alias-normalisation logic (`_normalize_stacked_columns`) is applied as before — this preserves backward compatibility.
-- Validation: if `datetime_col` is not present in `df.columns`, raise `ValueError(f"datetime_column '{datetime_col}' not found in file")`.
-
-**Pseudocode diff:**
-
-```python
-# Before (inside _read_stacked_signal_file):
-df = _normalize_stacked_columns(df)
-# … uses hardcoded "datetime" as the pivot index key …
-
-# After:
-if datetime_col is not None:
-    if datetime_col not in df.columns:
-        raise ValueError(f"datetime_column '{datetime_col}' not found in file")
-    # rename the selected column to the canonical "datetime" for the rest of the function
-    if datetime_col != "datetime":
-        df = df.rename({datetime_col: "datetime"})
-else:
-    df = _normalize_stacked_columns(df)
-```
-
-#### 4.4.2 `_extract_channel_units` — new helper function
-
-```python
-_MAX_UNIT_LEN = 32
-
-def _extract_channel_units(
-    df: pl.DataFrame,
-    unit_col: str,
-    channels: list[str],
-    csv_format: Literal["wide", "stacked"],
-    signal_name_col: str = "signal_name",
-) -> dict[str, str]:
-    """Return a per-channel unit map from the raw DataFrame.
-
-    Stacked format:
-        For each channel name in *channels*, find the first non-null value
-        of *unit_col* where ``signal_name == channel``.
-
-    Wide format:
-        The most common non-null value of *unit_col* is used for every
-        channel in *channels* (single shared unit).
-
-    Returns:
-        ``{channel_name: unit_string}`` — channels with no unit are omitted.
-        Unit strings longer than _MAX_UNIT_LEN are truncated with "…".
-    """
-    if unit_col not in df.columns:
-        raise ValueError(f"unit_column '{unit_col}' not found in file")
-
-    def _truncate(s: str) -> str:
-        return s if len(s) <= _MAX_UNIT_LEN else s[: _MAX_UNIT_LEN - 1] + "…"
-
-    result: dict[str, str] = {}
-
-    if csv_format == "stacked":
-        for ch in channels:
-            rows = df.filter(
-                (pl.col(signal_name_col) == ch) & pl.col(unit_col).is_not_null()
-            )
-            if rows.is_empty():
-                continue
-            unit_val = str(rows[unit_col][0])
-            if unit_val.strip():
-                result[ch] = _truncate(unit_val)
-    else:
-        # Wide format: single shared unit (most common non-null value)
-        non_null = df[unit_col].drop_nulls().cast(pl.Utf8)
-        if non_null.is_empty():
-            return result
-        counts = non_null.value_counts(sort=True)
-        most_common = str(counts["value"][0])
-        if most_common.strip():
-            for ch in channels:
-                result[ch] = _truncate(most_common)
-
-    return result
-```
-
-#### 4.4.3 `run_pipeline` — signature and body change
-
-```python
-async def run_pipeline(
-    signal_id: uuid.UUID,
-    raw_path: str,
-    session_factory: async_sessionmaker,
-    storage: IStorageAdapter,
-    csv_format: str = "wide",
-    time_column: str | None = None,
-    signal_columns: list[str] | None = None,
-    stacked_channel_filter: list[str] | None = None,
-    datetime_column: str | None = None,    # NEW
-    unit_column: str | None = None,        # NEW
-) -> None:
-```
-
-**Body changes:**
-1. Pass `datetime_col=datetime_column` to `_read_stacked_signal_file` for stacked format.
-2. After reading timestamps and channels, if `unit_column` is not `None`, call `_extract_channel_units(raw_df, unit_column, list(channels.keys()), csv_format)` to obtain `channel_units`.
-3. When writing the processed Parquet, write each unit as a constant column named `__unit_<channel_name>` (prefixed to avoid collision with signal channel names).
-
-**Parquet schema (after this change):**
-
-| Column | Type | Description |
-|---|---|---|
-| `timestamp_s` | Float64 | Elapsed seconds from first point |
-| `t0_epoch_s` | Float64 (constant) | Unix epoch of first point; absent for numeric time axis |
-| `<channel_name>` | Float64 | Signal values |
-| `<channel_name>_state` | Utf8 | IDLE / ACTIVE per point |
-| `__unit_<channel_name>` | Utf8 (constant) | Unit string; absent when no unit column selected |
-
----
-
-### 4.5 Backend — Application Layer: Service
-
-**File:** `backend/app/application/signal/service.py`
-
-#### 4.5.1 `process_signal` — extended validation
-
-For **stacked format**, add validation of `datetime_column` and `unit_column`:
-
-```python
-# After the existing stacked_channel_filter validation block:
-
-if request.datetime_column:
-    df_head = _load_raw_dataframe(signal.file_path).head(1)
-    if request.datetime_column not in df_head.columns:
-        raise KeyError(
-            f"datetime_column '{request.datetime_column}' not found in file"
-        )
-
-if request.unit_column:
-    df_head = df_head if "df_head" in dir() else _load_raw_dataframe(signal.file_path).head(1)
-    if request.unit_column not in df_head.columns:
-        raise KeyError(
-            f"unit_column '{request.unit_column}' not found in file"
-        )
-```
-
-For **wide format**, add `unit_column` validation (after existing wide validation):
-
-```python
-if request.unit_column:
-    if request.unit_column not in file_cols:
-        raise KeyError(f"unit_column '{request.unit_column}' not found in file")
-    if request.unit_column == request.time_column:
-        raise ValueError("unit_column cannot be the same as time_column")
-    if request.unit_column in request.signal_columns:
-        raise ValueError("unit_column cannot be in signal_columns")
-```
-
-Pass new fields to `run_pipeline`:
-
-```python
-task = asyncio.create_task(
-    run_pipeline(
-        signal.id,
-        signal.file_path,
-        session_factory,
-        self.storage,
-        csv_format=request.csv_format,
-        time_column=request.time_column if request.csv_format == "wide" else None,
-        signal_columns=request.signal_columns if request.csv_format == "wide" else None,
-        stacked_channel_filter=request.stacked_channel_filter,
-        datetime_column=request.datetime_column,   # NEW
-        unit_column=request.unit_column,           # NEW
-    )
-)
-```
-
-#### 4.5.2 `get_macro_view` — read `channel_units` from Parquet
-
-```python
-# Inside get_macro_view, after reading the Parquet:
-channel_units: dict[str, str] = {}
-for ch_name in channel_names:
-    unit_col_name = f"__unit_{ch_name}"
-    if unit_col_name in df.columns:
-        val = df[unit_col_name][0]
-        if val is not None:
-            channel_units[ch_name] = str(val)
-
-return MacroViewResponse(
-    signal_id=signal.id,
-    x=x,
-    channels=channel_data,
-    runs=run_bounds,
-    t0_epoch_s=t0_epoch_s,
-    channel_units=channel_units,   # NEW
-)
-```
-
----
-
-### 4.6 Backend — Presentation Layer: API Endpoint
-
-**File:** `backend/app/presentation/api/v1/endpoints/signals.py`
-
-No changes required to endpoint routing or HTTP method. The `process_signal` endpoint already accepts and forwards a `ProcessSignalRequest` body; the new fields are handled transparently by Pydantic. The error-handling block already maps `KeyError` to HTTP 422.
-
----
-
-### 4.7 Frontend — Type Definitions
+### 4.2 Frontend — Type Definitions
 
 **File:** `frontend/src/types/signal.ts`
 
 ```typescript
-export interface ProcessSignalRequest {
-  csv_format?: 'wide' | 'stacked';
-  time_column?: string;
-  signal_columns?: string[];
-  stacked_channel_filter?: string[] | null;
-  /** NEW — stacked format: explicit datetime column for x-axis. */
-  datetime_column?: string | null;
-  /** NEW — both formats: optional unit column for y-axis labels. */
-  unit_column?: string | null;
-}
+// ── Exploration types (Feature 8) ────────────────────────────────────────────
 
-export interface MacroViewResponse {
+export type WindowFunction =
+  | 'hann' | 'hamming' | 'blackman' | 'bartlett'
+  | 'flattop' | 'boxcar' | 'nuttall' | 'blackmanharris';
+
+export interface STFTResponse {
   signal_id: string;
-  x: number[];
-  channels: ChannelMacroData[];
-  runs: RunBound[];
-  t0_epoch_s: number | null;
-  /**
-   * NEW — map of channel_name → unit string.
-   * Empty object when no unit column was configured.
-   */
-  channel_units?: Record<string, string>;
-}
-```
-
----
-
-### 4.8 Frontend — Hook: useColumnConfig
-
-**File:** `frontend/src/hooks/useColumnConfig.ts`
-
-#### 4.8.1 State additions
-
-```typescript
-interface ColumnConfigState {
-  // … existing fields unchanged …
-
-  /** NEW — stacked format: user-selected datetime column name. */
-  datetimeCol: string | null;
-  /** NEW — both formats: optional unit column name; null = "(none)". */
-  unitCol: string | null;
-}
-```
-
-#### 4.8.2 New action types
-
-```typescript
-type Action =
-  // … existing actions …
-  | { type: 'SET_DATETIME_COL'; payload: string }
-  | { type: 'SET_UNIT_COL';     payload: string | null };
-```
-
-#### 4.8.3 Reducer changes
-
-**`FETCH_SUCCESS` for stacked format** — auto-select the datetime column:
-
-```typescript
-case 'FETCH_SUCCESS': {
-  const { csv_format, stacked_signal_names, columns } = action.payload;
-  if (csv_format === 'stacked') {
-    const temporalCols = columns.filter((c) => c.dtype === 'temporal');
-    // Prefer the canonical "datetime" column; fall back to first temporal.
-    const defaultDatetime =
-      temporalCols.find((c) => c.is_candidate_time)?.name ??
-      temporalCols[0]?.name ??
-      null;
-    return {
-      ...state,
-      status: 'ready',
-      csvFormat: 'stacked',
-      columns,
-      stackedSignalNames: stacked_signal_names,
-      selectedStackedChannels: new Set(stacked_signal_names),
-      datetimeCol: defaultDatetime,   // NEW
-      unitCol: null,                  // NEW
-      timeCol: null,
-      sigCols: new Set(),
-      fetchError: null,
-    };
-  }
-  // Wide format — unchanged; datetimeCol not used
-  // …
-}
-```
-
-**`SET_DATETIME_COL` and `SET_UNIT_COL`:**
-
-```typescript
-case 'SET_DATETIME_COL':
-  return { ...state, datetimeCol: action.payload };
-case 'SET_UNIT_COL':
-  return { ...state, unitCol: action.payload };
-```
-
-#### 4.8.4 `canSubmit` change for stacked format
-
-```typescript
-const canSubmit =
-  state.status === 'ready' &&
-  (state.csvFormat === 'stacked'
-    ? state.selectedStackedChannels.size > 0 &&
-      state.datetimeCol !== null                // NEW: require datetime selection
-    : !!state.timeCol &&
-      state.sigCols.size > 0 &&
-      !state.sigCols.has(state.timeCol));
-```
-
-#### 4.8.5 `handleSubmit` change
-
-```typescript
-// Inside the stacked branch:
-await processSignal(signalId, {
-  csv_format: 'stacked',
-  stacked_channel_filter: filter,
-  datetime_column: state.datetimeCol ?? undefined,    // NEW
-  unit_column: state.unitCol ?? undefined,            // NEW
-});
-
-// Inside the wide branch:
-await processSignal(signalId, {
-  csv_format: 'wide',
-  time_column: state.timeCol,
-  signal_columns: Array.from(state.sigCols),
-  unit_column: state.unitCol ?? undefined,            // NEW
-});
-```
-
-#### 4.8.6 `UseColumnConfigReturn` additions
-
-```typescript
-export interface UseColumnConfigReturn {
-  // … existing …
-  /** NEW — stacked format: selected datetime column. */
-  datetimeCol: string | null;
-  /** NEW — both formats: selected unit column, or null for "(none)". */
-  unitCol: string | null;
-  /** NEW — set the datetime column (stacked format). */
-  setDatetimeCol: (name: string) => void;
-  /** NEW — set or clear the unit column. */
-  setUnitCol: (name: string | null) => void;
-}
-```
-
----
-
-### 4.9 Frontend — Component: ColumnConfigPanel
-
-**File:** `frontend/src/components/ColumnConfigPanel.tsx`
-
-#### 4.9.1 New `UnitColumnSelector` sub-component
-
-```tsx
-interface UnitColumnSelectorProps {
-  columns: ColumnDescriptor[];
-  excludeNames: Set<string>;    // time/datetime col + signal cols
-  selected: string | null;
-  labelId: string;
-  onChange: (name: string | null) => void;
-}
-
-function UnitColumnSelector({
-  columns, excludeNames, selected, labelId, onChange,
-}: UnitColumnSelectorProps) {
-  const stringCols = columns.filter(
-    (c) => c.dtype === 'string' && !excludeNames.has(c.name)
-  );
-  if (stringCols.length === 0) return null;   // hide if no string columns exist
-
-  return (
-    <div className="space-y-2" role="radiogroup" aria-labelledby={labelId}>
-      <div id={labelId} className="flex items-center gap-1.5"
-           style={{ color: 'var(--sp-text-secondary)' }}>
-        <Tag size={12} aria-hidden="true" />
-        <span className="font-semibold uppercase tracking-wide text-[10px]">
-          Unit column
-        </span>
-        <span className="text-[9px] font-normal ml-1"
-              style={{ color: 'var(--sp-text-tertiary)' }}>
-          (optional)
-        </span>
-      </div>
-
-      {/* "(none)" default option */}
-      <label className="flex items-center gap-2 px-2.5 py-1.5 rounded cursor-pointer
-                        hover:bg-zinc-800/40 transition-colors">
-        <input
-          type="radio"
-          name={labelId}
-          value=""
-          checked={selected === null}
-          onChange={() => onChange(null)}
-          className="accent-blue-500"
-          aria-label="No unit column"
-        />
-        <span className="font-mono text-xs" style={{ color: 'var(--sp-text-tertiary)' }}>
-          (none)
-        </span>
-      </label>
-
-      {/* String-typed columns */}
-      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-        {stringCols.map((col) => (
-          <label key={col.name}
-                 className="flex items-center gap-2 px-2.5 py-1.5 rounded cursor-pointer
-                             hover:bg-zinc-800/40 transition-colors"
-                 style={{
-                   border: `1px solid ${selected === col.name
-                     ? 'var(--sp-brand,#3b82f6)' : 'var(--sp-border)'}`,
-                   background: selected === col.name
-                     ? 'var(--sp-surface-elevated)' : undefined,
-                 }}>
-            <input
-              type="radio"
-              name={labelId}
-              value={col.name}
-              checked={selected === col.name}
-              onChange={() => onChange(col.name)}
-              className="accent-blue-500"
-              aria-label={col.name}
-            />
-            <div className="min-w-0">
-              <span className="font-mono font-semibold text-xs truncate"
-                    style={{ color: 'var(--sp-text-primary)' }}>
-                {col.name}
-              </span>
-              {col.sample_values.length > 0 && (
-                <span className="ml-1 text-[10px] font-mono opacity-60"
-                      style={{ color: 'var(--sp-text-tertiary)' }}>
-                  e.g. {col.sample_values.slice(0, 2).join(', ')}
-                </span>
-              )}
-            </div>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-```
-
-#### 4.9.2 `ColumnConfigPanel` main component changes
-
-**Stacked format panel** — add `TimeColumnSelector` above `StackedChannelPicker`:
-
-```tsx
-{csvFormat === 'stacked' ? (
-  <div className="space-y-4">
-    {/* NEW: datetime column selector for stacked format */}
-    <TimeColumnSelector
-      columns={columns.filter((c) => c.dtype === 'temporal')}
-      selected={datetimeCol}
-      radioGroupName={`datetime-col-${uid}`}
-      labelId={`${uid}-datetime-label`}
-      onSelect={setDatetimeCol}
-    />
-    {/* Existing: channel picker */}
-    <StackedChannelPicker … />
-    {/* NEW: unit column selector */}
-    <UnitColumnSelector
-      columns={columns}
-      excludeNames={new Set([datetimeCol ?? '', ...selectedStackedChannels])}
-      selected={unitCol}
-      labelId={`${uid}-unit-label`}
-      onChange={setUnitCol}
-    />
-  </div>
-) : (
-  /* Wide format */
-  <div className="space-y-4">
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <TimeColumnSelector … />
-      <SignalColumnSelector … />
-    </div>
-    {/* NEW: unit column selector */}
-    <UnitColumnSelector
-      columns={columns}
-      excludeNames={new Set([timeCol ?? '', ...sigCols])}
-      selected={unitCol}
-      labelId={`${uid}-unit-label`}
-      onChange={setUnitCol}
-    />
-  </div>
-)}
-```
-
-**Inline validation** — add collision guard:
-
-```tsx
-{unitCol && (
-  (csvFormat === 'wide' && sigCols.has(unitCol)) ||
-  (csvFormat === 'stacked' && selectedStackedChannels.has(unitCol))
-) && (
-  <div role="alert" className="flex items-center gap-1.5 text-yellow-400 text-[10px]">
-    <AlertCircle size={11} aria-hidden="true" />
-    Unit column cannot be a signal channel. Deselect it.
-  </div>
-)}
-```
-
----
-
-### 4.10 Frontend — Component: MultiChannelMacroChart
-
-**File:** `frontend/src/components/MultiChannelMacroChart.tsx`
-
-**Change:** Use `macro.channel_units?.[ch.channel_name] ?? ''` as the `title.text` for each y-axis layout object:
-
-```typescript
-// Inside the layout useMemo:
-channels.forEach((ch, i) => {
-  const axKey = i === 0 ? 'yaxis' : `yaxis${i + 1}`;
-  l[axKey] = {
-    // … existing properties unchanged …
-    title: {
-      text: macro.channel_units?.[ch.channel_name] ?? '',   // CHANGED
-      font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
-    },
+  channel_name: string;
+  frequencies_hz: number[];
+  magnitudes: number[];
+  dominant_frequency_hz: number | null;
+  window_config: {
+    start_s: number;
+    end_s: number;
+    window_fn: WindowFunction;
+    window_size: number;
   };
-});
+  sampling_rate_hz: number;
+}
+
+export interface SpectrogramResponse {
+  signal_id: string;
+  channel_name: string;
+  time_bins_s: number[];           // shape (n_time,)
+  frequency_bins_hz: number[];     // shape (n_freq,)
+  magnitude_db: number[][];        // shape (n_time, n_freq)
+  sampling_rate_hz: number;
+  downsampled: boolean;
+}
+
+export interface ExplorationWindow {
+  start_s: number;
+  end_s: number;
+  sampleCount: number;
+  windowSize: number;              // next power of 2 >= sampleCount
+}
+
+export type ExplorationPhase =
+  | 'idle'
+  | 'exploring'
+  | 'locked'
+  | 'generating'
+  | 'spectrogram_ready';
 ```
 
-No other changes to this component.
+---
+
+### 4.3 Frontend — Hook: useSTFTExplorer
+
+**File:** `frontend/src/hooks/useSTFTExplorer.ts`
+
+This hook is the single source of truth for the entire exploration workflow. It owns the phase state machine and all async side-effects.
+
+#### State Shape
+
+```typescript
+interface STFTExplorerState {
+  phase: ExplorationPhase;
+
+  // Exploration
+  channel: string | null;
+  window: ExplorationWindow | null;
+
+  // FFT result
+  fftResult: STFTResponse | null;
+  fftLoading: boolean;
+  fftError: string | null;
+
+  // Parameters (locked)
+  windowFn: WindowFunction;
+  lockedWindowSize: number | null;
+  overlapPct: number;              // 0–95; default 50
+  hopSize: number;                 // derived: max(1, round(lockedWindowSize * (1 - overlapPct/100)))
+
+  // Spectrogram result
+  spectrogramResult: SpectrogramResponse | null;
+  spectrogramLoading: boolean;
+  spectrogramError: string | null;
+
+  // Shared x-axis range (synced between charts)
+  xRange: [number, number] | null;
+}
+```
+
+#### Key Action Handlers
+
+```typescript
+// Called by the Plotly onRelayout callback in select/dragmode:
+function onBrushChange(start_s: number, end_s: number, samplingRate: number): void {
+  // 1. Compute sampleCount from (end_s - start_s) * samplingRate
+  // 2. Compute windowSize = nextPowerOfTwo(sampleCount), clamp to [4, 131072]
+  // 3. If sampleCount < 4: set fftError, return
+  // 4. Update state.window; set phase = 'exploring'
+  // 5. Clear any pending debounce timer; schedule new fetchFFT in 300 ms
+}
+
+function onBrushClear(): void {
+  // Reset window, fftResult, fftError; set phase = 'idle'
+}
+
+async function fetchFFT(): Promise<void> {
+  // Abort previous in-flight request via AbortController
+  // Call api.fetchSTFT(signalId, channel, window, windowFn)
+  // On success: set fftResult, cache samplingRateHz
+  // On error: set fftError; clear fftLoading
+}
+
+function lockWindowSize(): void {
+  // Set lockedWindowSize = fftResult.window_config.window_size
+  // Recalculate hopSize; set phase = 'locked'
+}
+
+function unlockWindowSize(): void {
+  // Clear lockedWindowSize; set phase = 'exploring'
+}
+
+function onOverlapChange(pct: number): void {
+  // Clamp pct to [0, 95]
+  // hopSize = max(1, round(lockedWindowSize * (1 - pct / 100)))
+  // Update overlapPct, hopSize in state
+}
+
+async function generateSpectrogram(): Promise<void> {
+  // Abort any previous spectrogram request
+  // Set phase = 'generating', spectrogramLoading = true
+  // Call api.fetchSpectrogram(signalId, channel, lockedWindowSize, hopSize, windowFn)
+  // On success: set spectrogramResult, phase = 'spectrogram_ready'
+  // On error: set spectrogramError, phase = 'locked'
+}
+
+function onXRangeChange(range: [number, number]): void {
+  // Update shared xRange; consumed by both Plotly charts via uirevision
+}
+```
+
+#### nextPowerOfTwo Helper
+
+```typescript
+function nextPowerOfTwo(n: number): number {
+  if (n <= 1) return 4;               // minimum window_size
+  let p = 1;
+  while (p < n) p <<= 1;
+  return Math.min(p, 131072);         // maximum window_size
+}
+```
+
+---
+
+### 4.4 Frontend — Component: STFTExplorerPanel
+
+**File:** `frontend/src/components/STFTExplorerPanel.tsx`
+
+Top-level container for the exploration workflow. Renders all sub-components and manages layout.
+
+```typescript
+interface STFTExplorerPanelProps {
+  signalId: string;
+  channelNames: string[];
+  macroData: MacroViewResponse;     // for x-axis range sync and sampling rate
+}
+```
+
+**Layout (top → bottom):**
+1. **Channel selector** (dropdown, shown when `channelNames.length > 1`).
+2. **Exploration time-series chart** — Plotly line chart with `dragmode: 'select'`; brush callback wired to `onBrushChange`.
+3. **Info bar** — window duration, sample count, `window_size` (next power of 2).
+4. **FFT Spectrum panel** (`FFTSpectrumChart`) and **Parameter controls** (`STFTParamControls`) side by side.
+5. **Spectrogram panel** (`SpectrogramChart`) — conditionally rendered when `phase !== 'idle'`.
+
+**Responsibilities:**
+- Instantiates `useSTFTExplorer` and distributes state/actions as props.
+- Renders a collapsible section heading: "STFT Parameter Exploration".
+- Shows the exploration panel only for `COMPLETED` signals; renders a disabled placeholder with "Signal must be fully processed to use exploration" otherwise.
+
+---
+
+### 4.5 Frontend — Component: FFTSpectrumChart
+
+**File:** `frontend/src/components/FFTSpectrumChart.tsx`
+
+Renders the real-time FFT magnitude spectrum.
+
+```typescript
+interface FFTSpectrumChartProps {
+  result: STFTResponse | null;
+  loading: boolean;
+  error: string | null;
+}
+```
+
+**Rendering logic:**
+- **`loading && result === null`** → skeleton placeholder.
+- **`loading && result !== null`** → dim prior spectrum (opacity 0.4) + spinner overlay.
+- **`error`** → error banner with message.
+- **`result`** → Plotly `scatter` trace (`mode: 'lines'`) with `frequencies_hz` on x, `magnitudes` on y.
+
+**Chart configuration:**
+- Dark background matching `--sp-surface-secondary`.
+- `buildChartTheme(theme)` applied from `lib/chartTheme.ts`.
+- Dominant frequency annotated as a vertical dashed line using `shapes` + `annotations` in Plotly layout, colored with the project's `OOC_MARKER` color.
+- Panel header:
+  ```
+  {window_size} samples @ {sampling_rate_hz.toFixed(1)} Hz
+  | Duration: {((window_size / sampling_rate_hz) * 1000).toFixed(1)} ms
+  | Freq. resolution: {(sampling_rate_hz / window_size).toFixed(3)} Hz
+  ```
+
+---
+
+### 4.6 Frontend — Component: SpectrogramChart
+
+**File:** `frontend/src/components/SpectrogramChart.tsx`
+
+Renders the full-signal STFT spectrogram as a Plotly heatmap.
+
+```typescript
+interface SpectrogramChartProps {
+  result: SpectrogramResponse | null;
+  loading: boolean;
+  error: string | null;
+  t0EpochS: number | null;           // for absolute datetime x-axis
+  explorationWindow: ExplorationWindow | null;  // for brush overlay band
+  xRange: [number, number] | null;   // shared zoom range
+  onXRangeChange: (range: [number, number]) => void;
+}
+```
+
+**Rendering logic:**
+- **`loading`** → skeleton with label "Computing spectrogram…".
+- **`error`** → error banner (with specific messages for 413 and 422 per SRS).
+- **`result`** → Plotly `heatmap` trace:
+  - `z`: `result.magnitude_db` (transposed so rows = frequency, columns = time).
+  - `x`: `result.time_bins_s` (offset by `t0EpochS` if present using `new Date((t0EpochS + t) * 1000)`).
+  - `y`: `result.frequency_bins_hz`.
+  - `colorscale: 'Viridis'`.
+  - `colorbar.title: 'dBFS'`.
+  - `zsmooth: 'fast'` for GPU-accelerated rendering.
+- **Downsampled notice**: shown as a `<p>` element below the chart when `result.downsampled === true`.
+- **Brush overlay**: when `explorationWindow` is set, a Plotly `shape` with `type: 'rect'`, `x0/x1` from the window bounds, full `y0/y1` extent, `fillcolor: 'rgba(255,255,255,0.12)'`, `line.width: 0`.
+- **X-axis sync**: Plotly `onRelayout` calls `onXRangeChange` when `xaxis.range[0]` or `xaxis.range[1]` changes.
+- `uirevision` set to the shared `xRange` JSON string to prevent Plotly re-initialising on every render.
+
+---
+
+### 4.7 Frontend — Component: STFTParamControls
+
+**File:** `frontend/src/components/STFTParamControls.tsx`
+
+Controls for window lock, window function, overlap slider, and spectrogram generation trigger.
+
+```typescript
+interface STFTParamControlsProps {
+  phase: ExplorationPhase;
+  fftResult: STFTResponse | null;
+  lockedWindowSize: number | null;
+  windowFn: WindowFunction;
+  overlapPct: number;
+  hopSize: number;
+  signalLengthSamples: number;        // for n_windows preview
+  onLock: () => void;
+  onUnlock: () => void;
+  onWindowFnChange: (fn: WindowFunction) => void;
+  onOverlapChange: (pct: number) => void;
+  onGenerate: () => void;
+  spectrogramLoading: boolean;
+}
+```
+
+**Rendering sections (top → bottom):**
+
+1. **Window Function selector** — `<select>` with options: Hann (default), Hamming, Blackman, Bartlett, Flat Top, Boxcar. Enabled in `exploring` and `locked` phases.
+
+2. **Lock / Unlock row:**
+   - `phase === 'exploring'` and `fftResult !== null`: "Lock Window Size" button (primary).
+   - `phase === 'locked' | 'generating' | 'spectrogram_ready'`: "Locked ✓ {lockedWindowSize} samples" badge + "Unlock" button (secondary).
+
+3. **Overlap section** — visible and enabled when `lockedWindowSize !== null`:
+   - Label: "Overlap (%)"
+   - `<input type="range" min={0} max={95} step={5} />`
+   - Derived label: `hop_size: {hopSize} samples`
+   - Preview: `~{nWindows} windows across the full signal`
+
+4. **Generate button** — disabled when `phase !== 'locked'` or when `spectrogramLoading`. Shows spinner during `generating` phase.
+
+---
+
+### 4.8 Frontend — lib/api.ts additions
+
+**File:** `frontend/src/lib/api.ts`
+
+```typescript
+export async function fetchSTFT(
+  signalId: string,
+  channelName: string,
+  window: ExplorationWindow,
+  windowFn: WindowFunction,
+  signal?: AbortSignal,
+): Promise<STFTResponse> {
+  const params = new URLSearchParams({
+    channel_name: channelName,
+    start_s:      window.start_s.toString(),
+    end_s:        window.end_s.toString(),
+    window_size:  window.windowSize.toString(),
+    window_fn:    windowFn,
+  });
+  const res = await apiFetch(
+    `/signals/${signalId}/analysis/stft?${params}`,
+    { signal },
+  );
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.json() as Promise<STFTResponse>;
+}
+
+export async function fetchSpectrogram(
+  signalId: string,
+  channelName: string,
+  windowSize: number,
+  hopSize: number,
+  windowFn: WindowFunction,
+  signal?: AbortSignal,
+): Promise<SpectrogramResponse> {
+  const params = new URLSearchParams({
+    channel_name: channelName,
+    window_size:  windowSize.toString(),
+    hop_size:     hopSize.toString(),
+    window_fn:    windowFn,
+  });
+  const res = await apiFetch(
+    `/signals/${signalId}/analysis/spectrogram?${params}`,
+    { signal },
+  );
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.json() as Promise<SpectrogramResponse>;
+}
+```
+
+---
+
+### 4.9 Frontend — SignalsPage integration
+
+**File:** `frontend/src/pages/SignalsPage.tsx`
+
+The exploration view is mounted conditionally below the existing macro chart when the selected signal has status `COMPLETED`:
+
+```tsx
+{selectedSignal?.status === 'COMPLETED' && macroData && (
+  <STFTExplorerPanel
+    signalId={selectedSignal.id}
+    channelNames={selectedSignal.channel_names ?? []}
+    macroData={macroData}
+  />
+)}
+```
+
+The `MultiChannelMacroChart` and `STFTExplorerPanel` share an `xRange` state lifted to `SignalsPage` so that zooming in either chart propagates to the other:
+
+```tsx
+const [sharedXRange, setSharedXRange] = useState<[number, number] | null>(null);
+
+// Passed to both MultiChannelMacroChart and STFTExplorerPanel
+```
 
 ---
 
 ## 5. Data Design
 
-### 5.1 Processed Parquet Schema (after this feature)
+### 5.1 Processed Parquet (unchanged)
 
-The processed Parquet written by the pipeline gains optional `__unit_<channel_name>` constant columns:
+Feature 8 reads from the existing processed Parquet schema produced by the pipeline:
 
-| Column name | Polars dtype | Always present? | Description |
-|---|---|---|---|
-| `timestamp_s` | `Float64` | ✅ | Elapsed seconds from first data point |
-| `t0_epoch_s` | `Float64` | Only for temporal time columns | Unix epoch of first point |
-| `<channel_name>` | `Float64` | ✅ | Signal values for this channel |
-| `<channel_name>_state` | `Utf8` | ✅ | `IDLE` / `ACTIVE` per point |
-| `__unit_<channel_name>` | `Utf8` | Only when `unit_column` was configured | Constant unit string, same value every row |
+| Column | Type | Description |
+|---|---|---|
+| `timestamp_s` | Float64 | Elapsed seconds from first point |
+| `t0_epoch_s` | Float64 (constant) | Unix epoch of first point; absent for numeric time axis |
+| `<channel_name>` | Float64 | Signal amplitude values |
+| `<channel_name>_state` | Utf8 | IDLE / ACTIVE per point |
+| `__unit_<channel_name>` | Utf8 (constant) | Unit string if configured |
 
-**Design rationale:** Storing units as constant columns in the Parquet (rather than Parquet metadata/schema-level key-value pairs) keeps the read path simple: `df["__unit_signal_1"][0]` always returns the unit string without parsing custom metadata blobs.
+No new columns are added by Feature 8.
 
-### 5.2 SQL Schema
+### 5.2 Frontend State Persistence
 
-No changes to the `signal_metadata` or `run_segments` tables. The `datetime_column` and `unit_column` are transient configuration inputs; only their outputs (the processed Parquet content and `channel_names`) are persisted.
-
-### 5.3 Data Flow
-
-```
-User selects datetime_column="event_time", unit_column="unit"
-  │
-  ▼
-POST /signals/{id}/process
-  ├─ Server validates column names exist in raw file (head(1) read)
-  ├─ Queues run_pipeline(… datetime_column="event_time", unit_column="unit")
-  │
-  ▼  [Background Task]
-run_pipeline()
-  ├─ _load_raw_dataframe(raw_path)           → full DataFrame
-  ├─ _read_stacked_signal_file(df,
-  │     datetime_col="event_time")           → timestamps_s, channels, t0_epoch_s
-  ├─ _extract_channel_units(df,
-  │     unit_col="unit",
-  │     channels=["signal_1","signal_2"],
-  │     csv_format="stacked")               → {"signal_1":"mV","signal_2":"°C"}
-  ├─ classifier + segmenter                  → states + run segments
-  └─ write Parquet(
-         timestamp_s, t0_epoch_s,
-         signal_1, signal_1_state,
-         __unit_signal_1 = "mV",            ← constant column
-         signal_2, signal_2_state,
-         __unit_signal_2 = "°C"             ← constant column
-     )
-
-GET /signals/{id}/macro
-  ├─ read Parquet
-  ├─ extract channel_units from __unit_* columns
-  └─ return MacroViewResponse(
-         …,
-         channel_units={"signal_1":"mV","signal_2":"°C"}
-     )
-
-Frontend MultiChannelMacroChart
-  └─ yaxis.title.text = channel_units["signal_1"] → "mV"
-```
+The `useSTFTExplorer` hook state is **component-local** (React `useReducer`). No exploration state is persisted to `localStorage`, the database, or URL parameters. Navigating away from the signal detail page resets the exploration workflow.
 
 ---
 
 ## 6. API Contracts
 
-### 6.1 `GET /api/v1/signals/{signal_id}/raw-columns`
+Feature 8 consumes two existing endpoints. Their contracts are reproduced here for reference.
 
-**No changes.** Response already includes all columns with `dtype` set to `"temporal"`, `"numeric"`, `"string"`, or `"boolean"`. Frontend uses this to populate the new selectors.
+### 6.1 GET /signals/{signal_id}/analysis/stft
 
-### 6.2 `POST /api/v1/signals/{signal_id}/process`
+**Query parameters:**
 
-**Request body changes (backward-compatible additions):**
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `channel_name` | string | ✓ | — | Channel column in Parquet |
+| `start_s` | float | ✓ | — | Window start (seconds, ≥ 0) |
+| `end_s` | float | ✓ | — | Window end (seconds, > start_s) |
+| `window_fn` | enum | — | `hann` | Window function |
+| `window_size` | int | — | `1024` | FFT length in samples (power of 2, 4–131072) |
 
-```jsonc
-// Stacked format with new fields
+**Response 200 — `STFTResponse`:**
+
+```json
 {
-  "csv_format": "stacked",
-  "stacked_channel_filter": ["signal_1", "signal_2"],
-  "datetime_column": "event_time",   // NEW — optional; omit to use alias detection
-  "unit_column": "unit"              // NEW — optional; omit for no unit labels
+  "signal_id": "uuid",
+  "channel_name": "sensor_a",
+  "frequencies_hz": [0.0, 0.976, 1.953, ...],
+  "magnitudes": [0.002, 0.845, 0.123, ...],
+  "dominant_frequency_hz": 12.5,
+  "window_config": { "start_s": 1.0, "end_s": 2.0, "window_fn": "hann", "window_size": 1024 },
+  "sampling_rate_hz": 1000.0
 }
+```
 
-// Wide format with new unit_column field
+**Error responses:** 404 (signal/channel not found), 409 (signal not COMPLETED), 422 (invalid params / signal too short).
+
+---
+
+### 6.2 GET /signals/{signal_id}/analysis/spectrogram
+
+**Query parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `channel_name` | string | ✓ | — | Channel column in Parquet |
+| `window_fn` | enum | — | `hann` | Window function |
+| `window_size` | int | — | `1024` | FFT frame length (power of 2, 4–131072) |
+| `hop_size` | int | — | `512` | Samples between frames (≥ 1) |
+
+**Response 200 — `SpectrogramResponse`:**
+
+```json
 {
-  "csv_format": "wide",
-  "time_column": "timestamp",
-  "signal_columns": ["sensor_a", "sensor_b"],
-  "unit_column": "measurement_unit"  // NEW — optional
+  "signal_id": "uuid",
+  "channel_name": "sensor_a",
+  "time_bins_s": [0.512, 1.024, ...],
+  "frequency_bins_hz": [0.0, 0.976, ...],
+  "magnitude_db": [[-80.2, -72.1, ...], ...],
+  "sampling_rate_hz": 1000.0,
+  "downsampled": false
 }
 ```
 
-**Error responses (new cases):**
-
-| HTTP | Condition |
-|---|---|
-| `422` | `datetime_column` name not found in the file |
-| `422` | `unit_column` name not found in the file |
-| `422` | `unit_column` same as `time_column`, `datetime_column`, or any signal column |
-
-### 6.3 `GET /api/v1/signals/{signal_id}/macro`
-
-**Response body changes (backward-compatible addition):**
-
-```jsonc
-{
-  "signal_id": "...",
-  "x": [0.0, 1.0, 2.0],
-  "channels": [...],
-  "runs": [...],
-  "t0_epoch_s": 1745000000.0,
-  "channel_units": {              // NEW — empty object {} when no units configured
-    "signal_1": "mV",
-    "signal_2": "°C"
-  }
-}
-```
+**Error responses:** 404, 409, 413 (payload exceeds `STFT_MAX_RESPONSE_MB`), 422.
 
 ---
 
 ## 7. UI & Interaction Design
 
-### 7.1 Key User Journeys
-
-#### 7.1.1 Stacked format with custom datetime column and units
+### 7.1 Layout
 
 ```
-1. User uploads a stacked CSV (columns: measurement_time, signal_name, signal_value, unit)
-2. UI: ColumnConfigPanel renders in "Stacked / Long format" mode
-3. UI: "Datetime axis column" radio-group shows [measurement_time ★suggested]
-   → User confirms measurement_time (pre-selected)
-4. UI: "Signal channels" checkbox list shows [signal_1 ✓, signal_2 ✓]
-5. UI: "Unit column (optional)" radio-group shows [(none), unit]
-   → User selects "unit"
-   → Inline preview appears: "signal_1 → mV  •  signal_2 → °C"
-6. User clicks "Process Signal"
-7. Frontend calls POST /process with datetime_column="measurement_time", unit_column="unit"
-8. Pipeline processes file; chart renders with "mV" on signal_1 y-axis, "°C" on signal_2
+┌─────────────────────────────────────────────────────────────────────────┐
+│  STFT Parameter Exploration                              [▼ Collapse]    │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Channel: [sensor_a ▾]                                                  │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │  Exploration Chart  (time-series + drag-to-select brush)          │  │
+│  │  Selection: 0.50 s · 512 samples · window_size → 512             │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌──────────────────────────────┐  ┌──────────────────────────────────┐ │
+│  │  FFT Spectrum                │  │  STFT Parameters                 │ │
+│  │  512 samples @ 1000 Hz       │  │  Window fn: [Hann ▾]            │ │
+│  │  Duration: 512 ms            │  │                                  │ │
+│  │  Freq. resolution: 1.953 Hz  │  │  [Lock Window Size]              │ │
+│  │                              │  │                                  │ │
+│  │  [spectrum chart]            │  │  ─── (locked below) ────         │ │
+│  │                              │  │  Overlap: [────●────] 50 %       │ │
+│  │                              │  │  hop_size: 256 samples           │ │
+│  │                              │  │  ~1 950 windows across signal    │ │
+│  │                              │  │                                  │ │
+│  │                              │  │  [Generate Spectrogram ▶]        │ │
+│  └──────────────────────────────┘  └──────────────────────────────────┘ │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │  Spectrogram (Viridis heatmap, time × frequency)                  │  │
+│  │  [Colorbar: dBFS]  [Reset Zoom]                                   │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 7.1.2 Wide format with unit column
+### 7.2 Phase Transitions Summary
+
+| Phase | Brush | FFT panel | Lock button | Overlap slider | Generate button |
+|---|---|---|---|---|---|
+| `idle` | Active | Placeholder | Hidden | Grayed out | Disabled |
+| `exploring` | Active | Loading / spectrum | "Lock Window Size" | Grayed out | Disabled |
+| `locked` | Active | Spectrum (read-only) | "Locked ✓ N / Unlock" | Active | **Enabled** |
+| `generating` | Active | Spectrum (read-only) | "Locked ✓ N" | Active | Spinner / Disabled |
+| `spectrogram_ready` | Active | Spectrum | "Locked ✓ N / Unlock" | Active | **Enabled** (re-gen) |
+
+### 7.3 Synchronized X-Axis Zoom
+
+Both the exploration chart and the spectrogram use Plotly's `onRelayout` event to publish `xaxis.range` changes. The shared `xRange` state in `SignalsPage` is passed back as `xaxis.range` (via Plotly's `layout.xaxis.range`) to both charts, achieving synchronized zoom without a separate state management library.
 
 ```
-1. User uploads a wide CSV (columns: ts, sensor_a, sensor_b, eng_unit)
-2. UI: ColumnConfigPanel renders in "Wide format" mode
-3. User selects: time column = ts; signal channels = [sensor_a, sensor_b]
-4. UI: "Unit column (optional)" shows [(none), eng_unit]
-   → User selects "eng_unit"
-5. User clicks "Process Signal"
-6. Frontend calls POST /process with unit_column="eng_unit"
-7. Chart renders with the most common eng_unit value on all y-axes
+User zooms spectrogram
+  → SpectrogramChart.onRelayout({ 'xaxis.range[0]': t0, 'xaxis.range[1]': t1 })
+  → onXRangeChange([t0, t1])
+  → SignalsPage: setSharedXRange([t0, t1])
+  → Exploration chart re-renders with layout.xaxis.range = [t0, t1]
+  → MultiChannelMacroChart re-renders with layout.xaxis.range = [t0, t1]
 ```
-
-#### 7.1.3 User skips unit column (default behaviour unchanged)
-
-```
-1. User uploads any CSV
-2. ColumnConfigPanel renders with "Unit column (optional)" section
-3. User leaves selection at "(none)" (default)
-4. User submits → POST /process called without unit_column field
-5. Processing is identical to existing behaviour; chart y-axes show blank titles
-```
-
-### 7.2 Component Tree (affected portion)
-
-```
-ColumnConfigPanel
-├─ [stacked] ─── DatetimeColumnSelector   ← NEW (reuses TimeColumnSelector, temporal cols only)
-│  ├─ [stacked] ─ StackedChannelPicker    (unchanged)
-│  └─ [both]  ─── UnitColumnSelector      ← NEW
-│
-└─ [wide] ──────── grid
-   ├── TimeColumnSelector                 (unchanged)
-   ├── SignalColumnSelector               (unchanged)
-   └── UnitColumnSelector                 ← NEW
-```
-
-### 7.3 State Management
-
-All new state is managed inside the existing `useColumnConfig` hook using the existing `useReducer` pattern. No new contexts or global stores are required.
-
-| State field | Type | Initial value | Updated by |
-|---|---|---|---|
-| `datetimeCol` | `string \| null` | `null` | `FETCH_SUCCESS` (auto-select), `SET_DATETIME_COL` |
-| `unitCol` | `string \| null` | `null` | `SET_UNIT_COL` |
 
 ---
 
 ## 8. Technical Specifications & NFRs
 
-| Concern | Decision |
+| Category | Specification |
 |---|---|
-| **Performance — unit extraction** | `_extract_channel_units` iterates once per channel using Polars filter+head(1). For stacked CSVs with N channels and R rows, complexity is O(N × R) worst case but Polars executes this in a single scan via lazy evaluation if needed. Target: ≤ 50 ms for 100 000 rows. |
-| **Backward compatibility — API** | All new fields are optional with sensible defaults. Existing callers receive `channel_units: {}` in macro responses without any code change. |
-| **Backward compatibility — Parquet** | `get_macro_view` checks `if "__unit_{ch_name}" in df.columns` before reading; missing columns return an empty unit map. |
-| **Security — unit string** | Unit strings from the CSV are truncated to 32 characters and rendered as plain text in Plotly axis titles (not as HTML), preventing any injection via crafted CSV content. |
-| **Testing** | New backend unit tests cover: (a) `_read_stacked_signal_file` with `datetime_col` parameter; (b) `_extract_channel_units` for both stacked and wide format; (c) partial/null units; (d) `process_signal` validation errors for missing/colliding columns. Frontend tests cover: (a) reducer transitions for `SET_DATETIME_COL` / `SET_UNIT_COL`; (b) `canSubmit` with missing `datetimeCol`; (c) `handleSubmit` payload shape. |
-| **Accessibility** | New radio-groups use `role="radiogroup"` + `aria-labelledby`. The `UnitColumnSelector` is hidden (`return null`) when no eligible string columns exist, avoiding an empty form section. |
-| **Scalability** | No new database queries are added. The unit extraction reads from the already-loaded raw DataFrame and adds a fixed number of constant columns to the output Parquet, with no impact on query performance. |
+| **FFT Latency** | `GET /signals/{id}/analysis/stft` ≤ 500 ms for `window_size ≤ 131072` (single-core backend baseline). |
+| **Debounce** | Brush interaction debounce = 300 ms. New brush events within the 300 ms window reset the timer; previous `AbortController` is called before dispatching a new request. |
+| **Heatmap Rendering** | `SpectrogramChart` uses Plotly's `heatmap` trace type with `zsmooth: 'fast'` to leverage WebGL acceleration where available. Target: 2000 × 1024 matrix renders without main-thread freeze. |
+| **Abort Controller** | One `AbortController` per in-flight request type (FFT, spectrogram). A new request always aborts the prior one. `AbortError` is silently ignored; all other errors surface as `error` state. |
+| **No Backend Changes** | Feature 8 introduces zero backend changes. All computation is delegated to the existing Feature 6 analysis endpoints. |
+| **Bundle Impact** | No new Plotly import paths; the existing `plotly-dist-min` bundle already includes `Heatmap` and `Scatter` trace types. |
+| **Colorscale** | `Viridis` only. `Jet` is forbidden per scientific visualization policy. |
+| **Accessibility** | `<select>` channel/window-fn selectors: native `<select>` with `aria-label`. Overlap `<input type="range">`: `aria-label="Overlap percentage"` + `aria-valuenow`. Buttons: descriptive `aria-label` on icon-only variants. |
+| **Testing** | Unit tests for `nextPowerOfTwo`, `hopSize` calculation, and phase transition logic in `useSTFTExplorer`. Integration tests for `fetchSTFT` and `fetchSpectrogram` using MSW mocks. Backend endpoints already tested in `backend/tests/`. |
