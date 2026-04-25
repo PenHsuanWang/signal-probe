@@ -35,7 +35,7 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
 
   const layout = useMemo((): Partial<Plotly.Layout> => {
     const base = buildChartTheme(theme);
-    const shapes: Partial<Plotly.Shape>[] = result
+    const shapes: Partial<Plotly.Shape>[] = result?.dominant_frequency_hz != null
       ? [
           {
             type: 'line',
@@ -133,7 +133,7 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
           Freq res: <span style={{ color: 'var(--sp-text-secondary)' }}>{freqRes.toFixed(3)}</span> Hz
         </span>
         <span className="text-amber-400">
-          Dominant: {result.dominant_frequency_hz.toFixed(2)} Hz
+          Dominant: {result.dominant_frequency_hz != null ? `${result.dominant_frequency_hz.toFixed(2)} Hz` : '—'}
         </span>
       </div>
       <Plot

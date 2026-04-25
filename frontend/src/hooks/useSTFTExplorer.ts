@@ -173,8 +173,12 @@ export interface UseSTFTExplorerReturn {
 export function useSTFTExplorer(
   signalId: string,
   macroX: number[],
+  initialChannel?: string,
 ): UseSTFTExplorerReturn {
-  const [state, dispatch] = useReducer(reducer, { ...BASE_STATE });
+  const [state, dispatch] = useReducer(reducer, {
+    ...BASE_STATE,
+    channel: initialChannel ?? null,
+  });
 
   // Async operation refs
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -183,7 +183,7 @@ export interface STFTResponse {
   channel_name: string;
   frequencies_hz: number[];
   magnitudes: number[];
-  dominant_frequency_hz: number;
+  dominant_frequency_hz: number | null;
   window_config: STFTWindowConfig;
   sampling_rate_hz: number;
 }

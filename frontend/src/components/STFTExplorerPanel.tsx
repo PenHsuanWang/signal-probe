@@ -41,7 +41,7 @@ export default function STFTExplorerPanel({
     setWindowFn,
     setOverlapPct,
     generateSpectrogram,
-  } = useSTFTExplorer(signalId, macroData.x);
+  } = useSTFTExplorer(signalId, macroData.x, channelNames[0]);
 
   // Auto-select first channel if none selected
   const activeChannel = state.channel ?? channelNames[0] ?? null;
@@ -61,11 +61,12 @@ export default function STFTExplorerPanel({
         x: macroData.x,
         y: channelData.y,
         type: 'scattergl',
-        mode: 'lines',
+        mode: 'lines+markers',
         name: activeChannel ?? '',
         line: { color: '#3b82f6', width: 1 },
-        selected: { marker: { color: '#f59e0b' } },
-        unselected: { marker: { opacity: 0.4 } },
+        marker: { size: 4, opacity: 0, color: '#3b82f6' },
+        selected: { marker: { color: '#f59e0b', opacity: 0.7, size: 5 } },
+        unselected: { marker: { opacity: 0 } },
       } as Plotly.Data,
     ];
   }, [channelData, macroData.x, activeChannel]);
