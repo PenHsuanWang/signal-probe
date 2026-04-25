@@ -11,7 +11,7 @@ export default function MainLayout() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--sp-surface-primary)' }}>
         <div className="animate-spin text-brand-500">
           <Activity size={32} />
         </div>
@@ -26,7 +26,7 @@ export default function MainLayout() {
   return (
     <SidebarProvider>
       <SignalsProvider>
-        <div className="flex flex-col h-screen overflow-hidden bg-zinc-950 text-zinc-100">
+        <div className="flex flex-col h-screen overflow-hidden font-sans">
           <TopNav />
           <div className="flex flex-1 overflow-hidden">
             <Sidebar />

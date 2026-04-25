@@ -1,5 +1,9 @@
 @import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
 
+/* ── Raw palette tokens ──────────────────────────────────────────────────── */
 @theme {
   --color-brand-400: #60a5fa;
   --color-brand-500: #3b82f6;
@@ -7,8 +11,38 @@
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
+/* ── Dark theme semantic tokens (default) ────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --sp-surface-primary:    #09090b;   /* zinc-950 */
+  --sp-surface-secondary:  #18181b;   /* zinc-900 */
+  --sp-surface-elevated:   #27272a;   /* zinc-800 */
+  --sp-border-subtle:      #27272a;   /* zinc-800 */
+  --sp-border-default:     #3f3f46;   /* zinc-700 */
+  --sp-text-primary:       #f4f4f5;   /* zinc-100 */
+  --sp-text-secondary:     #a1a1aa;   /* zinc-400 */
+  --sp-text-muted:         #52525b;   /* zinc-600 */
+}
+
+/* ── Light theme semantic tokens ─────────────────────────────────────────── */
+[data-theme="light"] {
+  --sp-surface-primary:    #ffffff;
+  --sp-surface-secondary:  #f8f9fa;
+  --sp-surface-elevated:   #f1f3f5;
+  --sp-border-subtle:      #e9ecef;
+  --sp-border-default:     #dee2e6;
+  --sp-text-primary:       #1a1a2e;
+  --sp-text-secondary:     #495057;
+  --sp-text-muted:         #868e96;
+}
+
+/* ── Base layer ──────────────────────────────────────────────────────────── */
 @layer base {
   body {
-    @apply bg-zinc-900 text-zinc-100 font-sans antialiased;
+    background-color: var(--sp-surface-primary);
+    color: var(--sp-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 150ms ease, color 150ms ease;
   }
 }

@@ -38,7 +38,10 @@ export function SignalsProvider({ children }: { children: React.ReactNode }) {
   // Keep the "needs polling" flag in sync without restarting the interval
   useEffect(() => {
     needsPollRef.current = signals.some(
-      (s) => s.status === 'PENDING' || s.status === 'PROCESSING',
+      (s) =>
+        s.status === 'AWAITING_CONFIG' ||
+        s.status === 'PENDING' ||
+        s.status === 'PROCESSING',
     );
   }, [signals]);
 

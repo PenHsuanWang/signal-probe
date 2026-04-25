@@ -1,7 +1,12 @@
 // TypeScript interfaces mirroring backend Pydantic schemas
 
-export type ProcessingStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
-export type SignalState = "IDLE" | "ACTIVE" | "OOC";
+export type ProcessingStatus =
+  | "AWAITING_CONFIG"
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "FAILED";
+export type SignalState = "IDLE" | "ACTIVE";
 
 export interface SignalMetadata {
   id: string;
@@ -9,11 +14,54 @@ export interface SignalMetadata {
   status: ProcessingStatus;
   total_points: number | null;
   active_run_count: number;
-  ooc_count: number;
   error_message: string | null;
   channel_names: string[];
+  /** Populated after the user selects a column config (EPIC-FLX) */
+  time_column: string | null;
+  signal_columns: string[] | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Column selection (EPIC-FLX) ──────────────────────────────────────────────
+
+export interface ColumnDescriptor {
+  name: string;
+  dtype: string;
+  null_count: number;
+  sample_values: string[];
+  is_candidate_time: boolean;
+}
+
+export interface RawColumnsResponse {
+  signal_id: string;
+  columns: ColumnDescriptor[];
+  /** Detected CSV format: 'wide' (one column per channel) or 'stacked' (long format). */
+  csv_format: 'wide' | 'stacked';
+  /** Unique signal names from the signal_name column (stacked format only). */
+  stacked_signal_names: string[];
+}
+
+export interface ProcessSignalRequest {
+  /** CSV format to process. Defaults to 'wide'. */
+  csv_format?: 'wide' | 'stacked';
+  /** Time axis column name (required for wide format). */
+  time_column?: string;
+  /** Signal channel column names (required for wide format). */
+  signal_columns?: string[];
+  /** Signal names to include from a stacked CSV (null/omit = all channels). */
+  stacked_channel_filter?: string[] | null;
+  /**
+   * Explicit datetime column name override (stacked format).
+   * When omitted the backend falls back to alias detection.
+   */
+  datetime_column?: string;
+  /**
+   * Column whose values contain the physical unit string for each row
+   * (e.g. "mV", "°C"). Present in both wide and stacked formats.
+   * When omitted no unit labels are attached to the y-axis.
+   */
+  unit_column?: string;
 }
 
 export interface RunBound {
@@ -21,7 +69,6 @@ export interface RunBound {
   run_index: number;
   start_x: number;
   end_x: number;
-  ooc_count: number;
 }
 
 // ── Multi-channel ────────────────────────────────────────────────────────────
@@ -37,6 +84,17 @@ export interface MacroViewResponse {
   x: number[];
   channels: ChannelMacroData[];
   runs: RunBound[];
+  /**
+   * Unix epoch seconds of the first timestamp.
+   * Present when the time column is temporal; null for numeric time axes.
+   * Reconstruct absolute datetime for index i as: new Date((t0_epoch_s + x[i]) * 1000)
+   */
+  t0_epoch_s: number | null;
+  /**
+   * Physical unit string per channel (e.g. { "voltage": "mV", "temp": "°C" }).
+   * Present when a unit column was selected during processing; omitted otherwise.
+   */
+  channel_units?: Record<string, string>;
 }
 
 export interface ChannelChunkData {
@@ -53,7 +111,6 @@ export interface RunChunkResponse {
   value_min: number | null;
   value_mean: number | null;
   value_variance: number | null;
-  ooc_count: number;
   x: number[];
   channels: ChannelChunkData[];
 }

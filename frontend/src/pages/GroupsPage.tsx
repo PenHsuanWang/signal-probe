@@ -8,12 +8,8 @@ import {
   listGroups, createGroup, updateGroup, deleteGroup,
   upsertGroupMember, removeGroupMember,
 } from '../lib/api';
+import { scientificColor } from '../lib/chartTheme';
 import type { Group, GroupMember, GroupCreateRequest, GroupMemberUpsert } from '../types/signal';
-
-// ── Channel color palette ────────────────────────────────────────────────────
-const CH_COLORS = [
-  '#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16',
-];
 
 // ── Inline editable text ──────────────────────────────────────────────────────
 function InlineEdit({
@@ -72,7 +68,7 @@ function MemberRow({ member, channelNames, onUpdate, onRemove }: MemberRowProps)
         {channelNames.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-1.5">
             {channelNames.map((ch, i) => {
-              const currentColor = colors[ch] ?? CH_COLORS[i % CH_COLORS.length];
+              const currentColor = colors[ch] ?? scientificColor(i);
               return (
                 <label key={ch} className="flex items-center gap-1.5 cursor-pointer">
                   <input
@@ -173,9 +169,9 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
   const availableSignals = allSignalIds.filter((s) => !memberIds.has(s.id));
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+    <div className="rounded-lg overflow-hidden" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
       {/* Group header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800/60">
+      <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--sp-border)' }}>
         <button
           onClick={() => setExpanded((v) => !v)}
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
@@ -184,11 +180,11 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
           {editingName ? (
             <InlineEdit value={group.name} onSave={handleRename} onCancel={() => setEditingName(false)} />
           ) : (
-            <span className="text-sm font-mono font-bold text-zinc-100 truncate">{group.name}</span>
+            <span className="text-sm font-sans font-semibold truncate" style={{ color: 'var(--sp-text-primary)' }}>{group.name}</span>
           )}
         </button>
 
-        <span className="text-[10px] font-mono text-zinc-600 flex-shrink-0">
+        <span className="text-[10px] font-sans flex-shrink-0" style={{ color: 'var(--sp-text-tertiary)' }}>
           {group.members.length} signal{group.members.length !== 1 ? 's' : ''}
         </span>
 
@@ -202,9 +198,9 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
 
         {confirmDelete ? (
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button onClick={onDelete} className="text-[10px] font-mono text-red-400 hover:text-red-300">Delete</button>
-            <span className="text-zinc-600">/</span>
-            <button onClick={() => setConfirmDelete(false)} className="text-[10px] font-mono text-zinc-500 hover:text-zinc-300">Cancel</button>
+            <button onClick={onDelete} className="text-[10px] font-sans text-red-400 hover:text-red-300">Delete</button>
+            <span style={{ color: 'var(--sp-text-tertiary)' }}>/</span>
+            <button onClick={() => setConfirmDelete(false)} className="text-[10px] font-sans text-zinc-500 hover:text-zinc-300">Cancel</button>
           </div>
         ) : (
           <button onClick={() => setConfirmDelete(true)} className="text-zinc-600 hover:text-red-400 transition-colors flex-shrink-0" title="Delete group">
@@ -215,7 +211,7 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
 
       {/* Description */}
       {group.description && (
-        <p className="px-4 py-1.5 text-[10px] font-mono text-zinc-500 border-b border-zinc-800/40">
+        <p className="px-4 py-1.5 text-[10px] font-sans" style={{ color: 'var(--sp-text-secondary)', borderBottom: '1px solid var(--sp-border)' }}>
           {group.description}
         </p>
       )}
@@ -225,7 +221,7 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
         <div className="px-4 py-3 space-y-3">
           {/* Members */}
           {group.members.length === 0 ? (
-            <p className="text-xs font-mono text-zinc-600 text-center py-2">No signals yet — add one below.</p>
+            <p className="text-xs font-sans text-center py-2" style={{ color: 'var(--sp-text-tertiary)' }}>No signals yet — add one below.</p>
           ) : (
             <div className="space-y-2">
               {group.members.map((m) => {
@@ -249,7 +245,8 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
               <select
                 value={addSignalId}
                 onChange={(e) => setAddSignalId(e.target.value)}
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono text-zinc-300 focus:outline-none focus:border-brand-500/40"
+                className="flex-1 rounded px-2 py-1.5 text-xs font-sans focus:outline-none focus:border-brand-500/40"
+                style={{ background: 'var(--sp-surface-elevated)', border: '1px solid var(--sp-border)', color: 'var(--sp-text-primary)' }}
               >
                 <option value="">— add signal to group —</option>
                 {availableSignals.map((s) => (
@@ -259,7 +256,7 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
               <button
                 disabled={!addSignalId}
                 onClick={handleAddMember}
-                className="px-3 py-1.5 text-xs font-mono bg-brand-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded transition-colors flex-shrink-0"
+                className="px-3 py-1.5 text-xs font-sans bg-brand-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded transition-colors flex-shrink-0"
               >
                 Add
               </button>
@@ -323,15 +320,15 @@ export default function GroupsPage() {
         <div className="flex items-center gap-3">
           <Layers size={20} className="text-brand-500" />
           <div>
-            <h1 className="text-sm font-bold font-mono text-zinc-100 tracking-widest uppercase">Groups</h1>
-            <p className="text-xs font-mono text-zinc-500 mt-0.5">
+            <h1 className="text-sm font-semibold font-sans" style={{ color: 'var(--sp-text-primary)' }}>Groups</h1>
+            <p className="text-xs font-sans mt-0.5" style={{ color: 'var(--sp-text-secondary)' }}>
               Bundle signals for multi-channel comparison and time alignment
             </p>
           </div>
         </div>
         <button
           onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono bg-brand-500 hover:bg-blue-400 text-white rounded transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 text-xs font-sans bg-brand-500 hover:bg-blue-400 text-white rounded transition-colors"
         >
           <Plus size={13} />
           <span>{showCreate ? 'Cancel' : 'New Group'}</span>
@@ -340,35 +337,37 @@ export default function GroupsPage() {
 
       {/* Create form */}
       {showCreate && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-3">
-          <p className="text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest">New Group</p>
+        <div className="rounded-lg p-4 space-y-3" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+          <p className="text-[10px] font-sans font-semibold uppercase tracking-wide" style={{ color: 'var(--sp-text-tertiary)' }}>New Group</p>
           {createError && (
-            <p className="text-xs font-mono text-red-400">{createError}</p>
+            <p className="text-xs font-sans text-red-400">{createError}</p>
           )}
           <div className="flex items-end gap-3">
             <div className="flex-1 space-y-1">
-              <label className="text-[10px] font-mono text-zinc-500 uppercase">Name *</label>
+              <label className="text-[10px] font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>Name *</label>
               <input
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
                 placeholder="e.g. Production Line A"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-brand-500/40 placeholder:text-zinc-600"
+                className="w-full rounded px-2.5 py-1.5 text-xs font-sans focus:outline-none focus:border-brand-500/40"
+                style={{ background: 'var(--sp-surface-elevated)', border: '1px solid var(--sp-border)', color: 'var(--sp-text-primary)' }}
               />
             </div>
             <div className="flex-1 space-y-1">
-              <label className="text-[10px] font-mono text-zinc-500 uppercase">Description</label>
+              <label className="text-[10px] font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>Description</label>
               <input
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="Optional"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs font-mono text-zinc-300 focus:outline-none focus:border-brand-500/40 placeholder:text-zinc-600"
+                className="w-full rounded px-2.5 py-1.5 text-xs font-sans focus:outline-none focus:border-brand-500/40"
+                style={{ background: 'var(--sp-surface-elevated)', border: '1px solid var(--sp-border)', color: 'var(--sp-text-primary)' }}
               />
             </div>
             <button
               onClick={handleCreate}
-              className="px-4 py-1.5 text-xs font-mono bg-brand-500 hover:bg-blue-400 text-white rounded transition-colors flex-shrink-0 self-end"
+              className="px-4 py-1.5 text-xs font-sans bg-brand-500 hover:bg-blue-400 text-white rounded transition-colors flex-shrink-0 self-end"
             >
               Create
             </button>
@@ -378,11 +377,11 @@ export default function GroupsPage() {
 
       {/* Groups list */}
       {loading ? (
-        <p className="text-xs font-mono text-zinc-600 py-4">Loading groups…</p>
+        <p className="text-xs font-sans py-4" style={{ color: 'var(--sp-text-tertiary)' }}>Loading groups…</p>
       ) : groups.length === 0 ? (
-        <div className="bg-zinc-900 border border-dashed border-zinc-700 rounded-lg p-12 text-center space-y-2">
-          <Layers size={36} className="text-zinc-700 mx-auto" />
-          <p className="text-xs font-mono text-zinc-600">No groups yet — create one above.</p>
+        <div className="rounded-lg p-12 text-center space-y-2" style={{ background: 'var(--sp-surface-secondary)', border: '1px dashed var(--sp-border)' }}>
+          <Layers size={36} className="mx-auto" style={{ color: 'var(--sp-text-tertiary)' }} />
+          <p className="text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>No groups yet — create one above.</p>
         </div>
       ) : (
         <div className="space-y-3">
