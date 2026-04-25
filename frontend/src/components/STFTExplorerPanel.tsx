@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Plot } from '../lib/plot';
 import { buildChartTheme } from '../lib/chartTheme';
@@ -38,7 +38,24 @@ export default function STFTExplorerPanel({
     [t0],
   );
   const fromDateStr = useCallback(
-    (d: string | number) => new Date(String(d)).getTime() / 1000 - t0,
+    (d: string | number): number => {
+      let ms: number;
+      if (typeof d === 'number') {
+        // Plotly can return epoch-ms as a raw number for date axes.
+        ms = d;
+      } else {
+        // Plotly's internal date format: 'YYYY-MM-DD HH:MM:SS.mmm' — UTC value
+        // but WITHOUT a timezone marker. new Date() parses space-separated date
+        // strings as LOCAL time in V8/Chrome, causing a timezone-offset shift in
+        // non-UTC locales (e.g. UTC+8 → 8 h shift in start_s / end_s).
+        // Normalise to strict ISO-8601 UTC before parsing to fix this.
+        const s = String(d).trim();
+        const withT = s.includes('T') ? s : s.replace(' ', 'T');
+        const utc = /[Zz]$|[+-]\d\d:\d\d$/.test(withT) ? withT : withT + 'Z';
+        ms = new Date(utc).getTime();
+      }
+      return ms / 1000 - t0;
+    },
     [t0],
   );
 
@@ -56,6 +73,13 @@ export default function STFTExplorerPanel({
     setOverlapPct,
     generateSpectrogram,
   } = useSTFTExplorer(signalId, macroData.x, channelNames[0]);
+
+  // Track when the last plotly_selected fired so handleDeselect can ignore
+  // the spurious plotly_deselect that Plotly.js v3 emits when Plotly.react()
+  // is called with a layout that omits the 'selections' key Plotly added
+  // internally during box-select. Without this guard the debounce timer is
+  // cleared before it fires and the FFT never runs on the first brush.
+  const lastSelectedAt = useRef<number>(0);
 
   // Auto-select first channel if none selected
   const activeChannel = state.channel ?? channelNames[0] ?? null;
@@ -149,6 +173,7 @@ export default function STFTExplorerPanel({
     (event: Readonly<Plotly.PlotSelectionEvent>) => {
       const rx = event?.range?.x;
       if (!rx || rx.length < 2) return;
+      lastSelectedAt.current = Date.now();
       // When the x-axis is a date axis, Plotly returns ISO strings; convert back
       // to elapsed seconds before passing to the backend.
       const start = hasDateAxis ? fromDateStr(rx[0]) : Number(rx[0]);
@@ -159,10 +184,17 @@ export default function STFTExplorerPanel({
       }
       handleBrushSelect(start, end);
     },
-    [state.channel, channelNames, selectChannel, handleBrushSelect],
+    [state.channel, channelNames, selectChannel, handleBrushSelect, hasDateAxis, fromDateStr],
   );
 
   const handleDeselect = useCallback(() => {
+    // Plotly.js v3 spuriously fires plotly_deselect when Plotly.react() is
+    // called with a layout that omits the internal 'selections' key (which
+    // Plotly adds automatically during box-select). This happens synchronously
+    // inside Plotly.react(), before the 300 ms debounce timer fires, cancelling
+    // the pending FFT call. Guard against this by ignoring any deselect that
+    // arrives within 500 ms of the most recent selection event.
+    if (Date.now() - lastSelectedAt.current < 500) return;
     clearBrush();
   }, [clearBrush]);
 
