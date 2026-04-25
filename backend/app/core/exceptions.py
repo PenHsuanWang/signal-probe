@@ -21,3 +21,15 @@ class NotFoundException(Exception):
     def __init__(self, message: str = "Resource not found") -> None:
         super().__init__(message)
         self.message = message
+
+
+class ConflictException(Exception):
+    """Raised when an operation cannot proceed due to resource state conflicts.
+
+    Maps to HTTP 409 Conflict at the presentation layer.
+    Examples: signal not yet COMPLETED, duplicate resource creation.
+    """
+
+    def __init__(self, message: str = "Resource state conflict") -> None:
+        super().__init__(message)
+        self.message = message
