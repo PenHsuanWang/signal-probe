@@ -31,6 +31,7 @@ _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
     "/upload",
     response_model=SignalMetadataResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload a signal CSV file",
 )
 async def upload_signal(
     file: UploadFile,
