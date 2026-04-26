@@ -223,7 +223,7 @@ export default function SignalsPage() {
                   )}
                   {s.status === 'COMPLETED' && (
                     <button
-                      onClick={() => navigate('/')}
+                      onClick={() => navigate(`/?signalId=${s.id}`)}
                       className="text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors"
                     >
                       Explore →
