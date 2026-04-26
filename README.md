@@ -7,9 +7,11 @@ By automating feature extraction and leveraging a Macro-Micro visualization arch
 ## Features
 
 - **Automated State Classification & Run Segmentation:** Tags every timestamp as `IDLE`, `ACTIVE`, or `OOC` (Out of Control) using a rolling-variance classifier, then groups active periods into independent "Runs".
-- **Macro Timeline Navigation:** Global overview using server-side LTTB downsampling (~2 000 pts regardless of dataset size). Includes a drag-and-drop brush tool for time-range selection.
+- **Macro Timeline Navigation:** Full-resolution global overview (all original data points via WebGL). Includes a drag-and-drop brush tool for time-range selection. When the time column is a datetime type, the x-axis displays absolute calendar dates.
 - **Micro Feature Grid (Small Multiples):** Dynamic grid of independent Plotly charts, one per selected Run, for side-by-side waveform comparison.
 - **Synchronized Crosshairs:** Hovering over any micro-chart instantly places a crosshair at the same relative X position across all other charts.
+- **STFT Parameter Exploration:** Interactive frequency-domain explorer. Brush any time window on the macro chart to instantly compute and display the FFT magnitude spectrum. Lock the window size and generate a full sliding-window spectrogram (time × frequency heatmap in dBFS). Supports 15 window functions (Hann, Hamming, Blackman, etc.) and configurable overlap percentage. CPU-bound computation runs in a `ProcessPoolExecutor` to keep the API event loop non-blocking.
+- **Multi-Channel Support:** Wide and stacked CSV formats; one subplot row per channel with independent y-axis scaling and optional physical unit labels.
 - **Secure Authentication:** JWT-based registration and login; all signal endpoints are protected.
 
 ## Technology Stack
@@ -19,7 +21,7 @@ By automating feature extraction and leveraging a Macro-Micro visualization arch
 | Backend language | Python 3.12, FastAPI |
 | ORM & database | SQLAlchemy 2.0 (Async) + asyncpg, PostgreSQL 16 |
 | Data validation | Pydantic v2 |
-| Signal algorithms | NumPy (LTTB), Polars (classifier, segmenter) |
+| Signal algorithms | NumPy, SciPy (STFT/spectrogram), Polars (classifier, segmenter) |
 | Package manager | `uv` |
 | Linter / formatter | `ruff` |
 | Frontend | React 19, TypeScript, Vite |
@@ -99,19 +101,37 @@ signal-probe/
 │   ├── app/
 │   │   ├── core/               # settings, security, exceptions
 │   │   ├── domain/             # pure-Python models, enums, algorithms
-│   │   │   ├── signal/         # LTTB, classifier, segmenter, schemas
+│   │   │   ├── signal/         # classifier, segmenter, schemas, format_constants
+│   │   │   ├── analysis/       # STFT engine (stft_engine.py), spectral schemas
 │   │   │   └── user/
 │   │   ├── application/        # use-case services + pipeline orchestrator
-│   │   ├── infrastructure/     # SQLAlchemy repos, storage adapters
+│   │   │   ├── signal/         # SignalService, pipeline
+│   │   │   └── analysis/       # STFTService (orchestrates engine + storage)
+│   │   ├── infrastructure/     # SQLAlchemy repos, storage adapters, executor
+│   │   │   └── executor.py     # ProcessPoolExecutor lifecycle (start/stop/get)
 │   │   └── presentation/       # FastAPI routers & endpoints
+│   │       └── api/v1/endpoints/
+│   │           ├── signals.py  # upload, process, macro, runs
+│   │           └── analysis.py # GET stft, GET spectrogram
 │   ├── alembic/                # database migrations
 │   └── pyproject.toml
 └── frontend/
     └── src/
-        ├── components/         # FileUploader, shared UI
-        ├── pages/              # Dashboard, Login, Register
-        ├── lib/api.ts          # typed Axios helpers
-        └── types/signal.ts     # TypeScript interfaces
+        ├── components/
+        │   ├── FileUploader.tsx
+        │   ├── ColumnConfigPanel.tsx
+        │   ├── MultiChannelMacroChart.tsx
+        │   ├── MicroChart.tsx
+        │   ├── STFTExplorerPanel.tsx   # collapsible STFT section in Dashboard
+        │   ├── STFTParamControls.tsx   # window function / overlap / lock controls
+        │   ├── FFTSpectrumChart.tsx    # real-time FFT spectrum Plotly chart
+        │   └── SpectrogramChart.tsx   # time×freq heatmap Plotly chart
+        ├── hooks/
+        │   ├── useColumnConfig.ts
+        │   └── useSTFTExplorer.ts     # useReducer state machine for STFT flow
+        ├── pages/              # Dashboard, Login, Register, SignalsPage
+        ├── lib/api.ts          # typed Axios helpers (fetchSTFT, fetchSpectrogram)
+        └── types/signal.ts     # TypeScript interfaces (STFTResponse, SpectrogramResponse, …)
 ```
 
 ## Documentation
