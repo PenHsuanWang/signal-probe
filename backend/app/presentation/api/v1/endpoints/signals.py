@@ -10,7 +10,6 @@ from fastapi import (
 )
 
 from app.application.signal.service import SignalService
-from app.core.exceptions import NotFoundException
 from app.db.session import AsyncSessionLocal
 from app.domain.signal.schemas import (
     MacroViewResponse,
@@ -31,6 +30,7 @@ _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
     "/upload",
     response_model=SignalMetadataResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload a signal CSV file",
 )
 async def upload_signal(
     file: UploadFile,
@@ -143,12 +143,7 @@ async def get_macro_view(
     signal = await svc.get_signal(signal_id)
     if signal is None or signal.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Signal not found")
-    try:
-        return await svc.get_macro_view(signal_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await svc.get_macro_view(signal_id)
 
 
 @router.get(
@@ -167,12 +162,7 @@ async def get_run_chunks(
     signal = await svc.get_signal(signal_id)
     if signal is None or signal.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Signal not found")
-    try:
-        return await svc.get_run_chunks(signal_id, run_ids)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await svc.get_run_chunks(signal_id, run_ids)
 
 
 @router.get(
@@ -194,14 +184,7 @@ async def get_raw_columns(
     signal = await svc.get_signal(signal_id)
     if signal is None or signal.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Signal not found")
-    try:
-        return await svc.get_raw_columns(signal_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except LookupError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await svc.get_raw_columns(signal_id)
 
 
 @router.post(
@@ -228,17 +211,8 @@ async def process_signal(
     signal = await svc.get_signal(signal_id)
     if signal is None or signal.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Signal not found")
-    try:
-        result = await svc.process_signal(signal_id, body, AsyncSessionLocal)
-        return SignalMetadataResponse.model_validate(result)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except LookupError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except KeyError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    result = await svc.process_signal(signal_id, body, AsyncSessionLocal)
+    return SignalMetadataResponse.model_validate(result)
 
 
 @router.post(
@@ -261,12 +235,5 @@ async def reconfigure_signal(
     signal = await svc.get_signal(signal_id)
     if signal is None or signal.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Signal not found")
-    try:
-        result = await svc.reconfigure_signal(signal_id)
-        return SignalMetadataResponse.model_validate(result)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except LookupError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = await svc.reconfigure_signal(signal_id)
+    return SignalMetadataResponse.model_validate(result)

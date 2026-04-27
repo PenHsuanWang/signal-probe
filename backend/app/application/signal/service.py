@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.signal.column_inspector import ColumnInspector
 from app.application.signal.pipeline import _load_raw_dataframe, run_pipeline
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import (
+    ConflictException,
+    NotFoundException,
+    ValidationException,
+)
 from app.domain.signal.enums import ProcessingStatus
 from app.domain.signal.models import RunSegment, SignalMetadata
 from app.domain.signal.repository import SignalRepository
@@ -96,12 +100,12 @@ class SignalService:
         if signal is None:
             raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.AWAITING_CONFIG:
-            raise LookupError(
+            raise ConflictException(
                 f"Column preview is only available for signals awaiting configuration "
                 f"(current status: {signal.status})"
             )
         if not signal.file_path:
-            raise ValueError("Raw file path is not set")
+            raise ValidationException("Raw file path is not set")
 
         inspector = ColumnInspector()
         columns = inspector.inspect_columns(signal.file_path)
@@ -137,7 +141,7 @@ class SignalService:
         if signal is None:
             raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.AWAITING_CONFIG:
-            raise LookupError(
+            raise ConflictException(
                 f"Signal is not awaiting configuration (status: {signal.status})"
             )
 
@@ -147,14 +151,22 @@ class SignalService:
             file_cols = set(df_head.columns)
 
             if request.time_column not in file_cols:
-                raise KeyError(f"time_column '{request.time_column}' not found in file")
+                raise ValidationException(
+                    f"time_column '{request.time_column}' not found in file"
+                )
             bad_sigs = [c for c in request.signal_columns if c not in file_cols]
             if bad_sigs:
-                raise KeyError(f"signal_columns not found in file: {bad_sigs}")
+                raise ValidationException(
+                    f"signal_columns not found in file: {bad_sigs}"
+                )
             if request.time_column in request.signal_columns:
-                raise ValueError("time_column cannot also appear in signal_columns")
+                raise ValidationException(
+                    "time_column cannot also appear in signal_columns"
+                )
             if request.unit_column and request.unit_column not in file_cols:
-                raise KeyError(f"unit_column '{request.unit_column}' not found in file")
+                raise ValidationException(
+                    f"unit_column '{request.unit_column}' not found in file"
+                )
 
             config_time_col: str | None = request.time_column
             config_sig_cols: list[str] = request.signal_columns
@@ -165,11 +177,11 @@ class SignalService:
                 df_head = _load_raw_dataframe(signal.file_path).head(1)
                 file_cols = set(df_head.columns)
                 if request.datetime_column and request.datetime_column not in file_cols:
-                    raise KeyError(
+                    raise ValidationException(
                         f"datetime_column '{request.datetime_column}' not found in file"
                     )
                 if request.unit_column and request.unit_column not in file_cols:
-                    raise KeyError(
+                    raise ValidationException(
                         f"unit_column '{request.unit_column}' not found in file"
                     )
             if request.stacked_channel_filter:
@@ -181,7 +193,7 @@ class SignalService:
                     c for c in request.stacked_channel_filter if c not in available_set
                 ]
                 if bad_channels:
-                    raise KeyError(
+                    raise ValidationException(
                         f"stacked channel names not found in file: {bad_channels}"
                     )
             # Store None for time_column (implicit in stacked format) and the
@@ -231,7 +243,9 @@ class SignalService:
         if signal is None:
             raise NotFoundException("Signal not found")
         if signal.status == ProcessingStatus.PROCESSING:
-            raise LookupError("Cannot reconfigure a signal while it is being processed")
+            raise ConflictException(
+                "Cannot reconfigure a signal while it is being processed"
+            )
 
         # Delete the processed Parquet from storage (best-effort; ignore missing).
         if signal.processed_file_path:
@@ -287,9 +301,9 @@ class SignalService:
         if signal is None:
             raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.COMPLETED:
-            raise ValueError(f"Signal is not ready (status={signal.status})")
+            raise ConflictException(f"Signal is not ready (status={signal.status})")
         if not signal.processed_file_path:
-            raise ValueError("Processed file not available")
+            raise ConflictException("Processed file not available")
 
         channel_names = self._decode_channel_names(signal.channel_names)
         df = pl.read_parquet(signal.processed_file_path)
@@ -347,9 +361,9 @@ class SignalService:
         if signal is None:
             raise NotFoundException("Signal not found")
         if signal.status != ProcessingStatus.COMPLETED:
-            raise ValueError("Signal is not ready")
+            raise ConflictException("Signal is not ready")
         if not signal.processed_file_path:
-            raise ValueError("Processed file not available")
+            raise ConflictException("Processed file not available")
 
         channel_names = self._decode_channel_names(signal.channel_names)
         segments: list[RunSegment] = await self.repo.get_runs_by_ids(signal_id, run_ids)
