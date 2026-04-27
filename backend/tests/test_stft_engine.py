@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from app.application.analysis.stft_service import _infer_sampling_rate
+from app.core.exceptions import ValidationException
 from app.domain.analysis.schemas import (
     SpectrogramConfig,
     STFTWindowConfig,
@@ -214,7 +215,7 @@ class TestInferSamplingRate:
 
     def test_single_sample_raises(self):
         """Single timestamp cannot produce a sampling rate."""
-        with pytest.raises(ValueError, match="at least 2"):
+        with pytest.raises(ValidationException, match="at least 2"):
             _infer_sampling_rate(np.array([0.0]))
 
     def test_robust_to_gaps(self):

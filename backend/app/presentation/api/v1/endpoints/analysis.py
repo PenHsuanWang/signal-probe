@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query
 
 from app.application.analysis.stft_service import STFTService
-from app.core.exceptions import ConflictException, NotFoundException
 from app.domain.analysis.schemas import (
     SpectrogramConfig,
     SpectrogramResponse,
@@ -74,35 +73,20 @@ async def get_stft(
       signal duration if it exceeds it.
     - **window_size**: Must be a power of 2 in the range [4, 131072].
     """
-    try:
-        config = STFTWindowConfig(
-            start_s=start_s,
-            end_s=end_s,
-            window_fn=window_fn,
-            window_size=window_size,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        )
+    config = STFTWindowConfig(
+        start_s=start_s,
+        end_s=end_s,
+        window_fn=window_fn,
+        window_size=window_size,
+    )
 
     svc = STFTService(session, storage)
-    try:
-        return await svc.get_stft(
-            signal_id=signal_id,
-            channel_name=channel_name,
-            config=config,
-            owner_id=current_user.id,
-        )
-    except NotFoundException as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
-    except ConflictException as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        )
+    return await svc.get_stft(
+        signal_id=signal_id,
+        channel_name=channel_name,
+        config=config,
+        owner_id=current_user.id,
+    )
 
 
 @router.get(
@@ -146,37 +130,16 @@ async def get_spectrogram(
     - **window_size**: Must be a power of 2 in the range [4, 131072].
       `hop_size` must be ≤ `window_size`.
     """
-    try:
-        config = SpectrogramConfig(
-            window_fn=window_fn,
-            window_size=window_size,
-            hop_size=hop_size,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        )
+    config = SpectrogramConfig(
+        window_fn=window_fn,
+        window_size=window_size,
+        hop_size=hop_size,
+    )
 
     svc = STFTService(session, storage)
-    try:
-        return await svc.get_spectrogram(
-            signal_id=signal_id,
-            channel_name=channel_name,
-            config=config,
-            owner_id=current_user.id,
-        )
-    except NotFoundException as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
-    except ConflictException as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
-    except ValueError as exc:
-        # Covers payload-too-large and short-signal cases
-        detail = str(exc)
-        if "MB" in detail and "limit" in detail:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=detail
-            )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail
-        )
+    return await svc.get_spectrogram(
+        signal_id=signal_id,
+        channel_name=channel_name,
+        config=config,
+        owner_id=current_user.id,
+    )

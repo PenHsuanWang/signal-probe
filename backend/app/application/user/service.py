@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ConflictException
 from app.core.security import get_password_hash, verify_password
 from app.domain.user.models import User
 from app.domain.user.repository import UserRepository
@@ -21,6 +22,6 @@ class UserService:
     async def create_user(self, user_in: UserCreate) -> User:
         existing_user = await self.repo.get_by_email(user_in.email)
         if existing_user:
-            raise ValueError("User with this email already exists.")
+            raise ConflictException("User with this email already exists.")
         hashed_password = get_password_hash(user_in.password)
         return await self.repo.create(user_in, hashed_password)

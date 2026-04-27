@@ -146,7 +146,39 @@
 - `application/analysis/stft_service.py` — `STFTService`: validates ownership/status, reads Parquet via Polars column projection, infers sampling rate from median inter-sample interval, dispatches to `ProcessPoolExecutor`, enforces payload size cap (`STFT_MAX_RESPONSE_MB`, default 50 MB).
 - `infrastructure/executor.py` — `ProcessPoolExecutor` lifecycle: `start_executor()` / `stop_executor()` called from FastAPI lifespan; `get_executor()` returns the running executor. Workers pre-warm NumPy/SciPy imports at startup. Worker count controlled by `ANALYSIS_WORKERS` env var (default: `max(2, cpu_count)`).
 
-### 4.3 Data & Storage Strategy
+### 4.4 Error Handling Architecture
+
+All backend errors are handled through a centralized, layered pattern. The hierarchy lives in `app/core/exceptions.py`; all HTTP mapping lives in `app/main.py`. No framework imports (FastAPI, Starlette) in the domain or application layers.
+
+```
+app/core/exceptions.py
+│
+├── DomainException (base)           ← no FastAPI/HTTP import
+│   ├── NotFoundException            → 404  (resource not found)
+│   ├── ConflictException            → 409  (wrong state, duplicate)
+│   └── ValidationException          → 422  (bad input, unknown column)
+│
+└── InfrastructureException          → 500  (DB / storage fault, logged)
+```
+
+**Who raises what:**
+
+| Layer | What it raises | What it catches |
+|-------|---------------|-----------------|
+| Application services | `NotFoundException`, `ConflictException`, `ValidationException` | nothing |
+| Repositories (DB) | `ConflictException` (IntegrityError), `InfrastructureException` (SQLAlchemyError + rollback) | `IntegrityError`, `SQLAlchemyError` |
+| Storage adapter | `ValidationException` (path traversal), `InfrastructureException` (OSError) | `OSError`, `FileNotFoundError` |
+| Presentation endpoints | — (no try/except for domain errors) | — |
+| `app/main.py` handlers | — | all of the above → HTTP response |
+
+**Client response envelope (all errors):**
+```json
+{ "error": { "code": "NOT_FOUND", "message": "Signal not found", "timestamp": "ISO8601" } }
+```
+
+**Infrastructure errors** are logged server-side with full traceback (`logger.exception`) but the client always receives a safe generic message (no paths or stack traces).
+
+
 
 - **PostgreSQL** stores relational metadata: user accounts, signal job status, and per-run aggregated statistics (duration, max, min, variance, OOC count).
 - **Blob/File Storage** stores raw and processed time-series data as `.parquet` / `.csv` files. This keeps PostgreSQL lean and enables 10–100× faster columnar reads via Polars/Pandas compared to row-based SQL for bulk float data.
@@ -227,6 +259,15 @@ All error responses use a standard envelope:
 ```json
 { "error": { "code": "NOT_FOUND", "message": "Signal not found", "timestamp": "ISO8601" } }
 ```
+
+**HTTP error codes and their domain mapping:**
+
+| Status | `code` field | Raised by |
+|--------|-------------|-----------|
+| `404 Not Found` | `NOT_FOUND` | `NotFoundException` — resource not found |
+| `409 Conflict` | `CONFLICT` | `ConflictException` — wrong pipeline state or duplicate resource |
+| `422 Unprocessable Entity` | `VALIDATION_ERROR` | `ValidationException` — bad input parameters, unknown column, path traversal; also Pydantic `RequestValidationError` |
+| `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | `InfrastructureException` (DB/storage fault) or unexpected exception — details logged server-side only |
 
 | Method | Endpoint | Auth | Purpose |
 |--------|----------|------|---------|
@@ -428,9 +469,20 @@ CREATE TABLE run_segments (
 - **Decision:** The pipeline supports two CSV layouts: `wide` (one column per channel) and `stacked` (long/tidy format with `timestamp`, `signal_name`, `value` columns).
 - **Rationale:** Many industrial data exports use stacked (long) format. Supporting both formats eliminates pre-processing by the user. Shared constants (`STACKED_REQUIRED_COLS`, `STACKED_COL_ALIASES`) live in `domain/signal/format_constants.py` — a single source of truth for both the pipeline and the column inspector.
 
-### ADR-007 — Standardized Error Response Envelope
-- **Decision:** All API error responses are wrapped in `{"error": {"code": "…", "message": "…", "timestamp": "…"}}` via a global `HTTPException` handler in `main.py`.
-- **Rationale:** Ensures the frontend always has a predictable error shape to parse. Avoids each endpoint implementing its own error format. Domain exceptions (`NotFoundException`) are plain Python exceptions — not `HTTPException` — and are mapped to HTTP status codes at the presentation layer only, preserving Clean Architecture boundaries.
+### ADR-007 — Comprehensive Exception Hierarchy & Centralized Error Handling
+- **Decision:** All API error responses are wrapped in `{"error": {"code": "…", "message": "…", "timestamp": "…"}}`. A four-class exception hierarchy in `app/core/exceptions.py` covers every failure mode; all HTTP mapping is centralized in `app/main.py` global handlers. Endpoints contain zero `try/except` boilerplate for domain errors.
+- **Exception hierarchy:**
+  - `DomainException` — abstract base for all business-logic failures (not `HTTPException`; no FastAPI import)
+    - `NotFoundException` → **404 Not Found**
+    - `ConflictException` → **409 Conflict** (wrong state, duplicate resource)
+    - `ValidationException` → **422 Unprocessable Entity** (bad request parameters, unknown column, etc.)
+  - `InfrastructureException` — wraps storage (`OSError`) and database (`SQLAlchemyError`) faults → **500 Internal Server Error** (logged server-side; generic message to client)
+- **Layer responsibilities:**
+  - **Domain / Application layers:** raise only `DomainException` subclasses or `InfrastructureException` — never `HTTPException`, `ValueError`, `KeyError`, or `LookupError`.
+  - **Infrastructure (repositories + storage):** catch `IntegrityError` → `ConflictException`; `SQLAlchemyError` → `InfrastructureException` (with `session.rollback()`); `OSError` / `FileNotFoundError` → `InfrastructureException`; path-traversal attempts → `ValidationException`.
+  - **Presentation (endpoints):** no domain `try/except` blocks; all exceptions bubble to the global handlers registered in `main.py`.
+- **Rationale:** Ensures the frontend always parses a predictable error shape. Eliminates duplicated error-handling boilerplate across 3 endpoint files. Keeps the domain and application layers framework-free. Infrastructure errors are logged with full traceback (`logger.exception`) but clients receive only a safe, generic message — no internal paths or stack traces are leaked.
+- **Tests:** `tests/test_error_handling.py` — 22 tests covering hierarchy, HTTP mapping (isolated `TestClient`), service-level exceptions, storage exceptions, and path-traversal guard.
 
 ### ADR-008 — Channel Units Stored in Parquet, Not SQL
 - **Decision:** Physical unit strings per channel are written as constant `__unit_<channel_name>` columns in the processed Parquet file. They are **not** stored in a SQL column on `signal_metadata`.
@@ -505,7 +557,7 @@ CREATE TABLE run_segments (
 | Wide CSV + Stacked CSV format detection and parsing | ✅ Implemented |
 | Temporal datetime time-column parsing + `t0_epoch_s` | ✅ Implemented |
 | Two-step upload flow (column selection → process) | ✅ Implemented |
-| Standardized error envelope (`_global_exception_handler`) | ✅ Implemented |
+| Standardized error envelope + comprehensive exception hierarchy | ✅ Implemented |
 | `format_constants.py` single source of truth for stacked format | ✅ Implemented |
 | Alembic initial migration | ✅ Creates all 3 tables |
 | `FileUploader` + `ColumnConfigPanel` components | ✅ Implemented |
@@ -527,6 +579,8 @@ CREATE TABLE run_segments (
 | **`useSTFTExplorer` hook** — `useReducer` state machine, debounce, `AbortController`, phase transitions | ✅ Implemented |
 | **Datetime axis sync in spectrogram** — `t0_epoch_s` → ISO date strings on spectrogram x-axis | ✅ Implemented |
 | **STFT test suite** (`backend/tests/test_stft_engine.py`) — 340-line coverage of engine, edge cases | ✅ Implemented |
+| **Comprehensive error handling** — 4-class exception hierarchy (`DomainException`, `NotFoundException`, `ConflictException`, `ValidationException`, `InfrastructureException`); centralized global handlers in `main.py`; all repositories and storage adapter wrap DB/OS errors; all endpoints clean of boilerplate try/except | ✅ Implemented |
+| **Error handling test suite** (`backend/tests/test_error_handling.py`) — 22 tests covering hierarchy, HTTP mapping, service-layer, storage, path-traversal guard | ✅ Implemented |
 
 ---
 
