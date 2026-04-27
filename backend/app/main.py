@@ -1,3 +1,4 @@
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -10,8 +11,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.core.exceptions import (
+    ConflictException,
+    InfrastructureException,
+    NotFoundException,
+    ValidationException,
+)
 from app.infrastructure.executor import start_executor, stop_executor
 from app.presentation.api.v1.router import api_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -57,6 +66,85 @@ def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", str(uuid.uuid4()))
 
 
+@app.exception_handler(NotFoundException)
+async def _not_found_exception_handler(
+    request: Request, exc: NotFoundException
+) -> JSONResponse:
+    """Map NotFoundException → HTTP 404 using the standard error envelope."""
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "code": "NOT_FOUND",
+                "message": exc.message,
+                "request_id": _request_id(request),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        },
+    )
+
+
+@app.exception_handler(ConflictException)
+async def _conflict_exception_handler(
+    request: Request, exc: ConflictException
+) -> JSONResponse:
+    """Map ConflictException → HTTP 409 using the standard error envelope."""
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": {
+                "code": "CONFLICT",
+                "message": exc.message,
+                "request_id": _request_id(request),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        },
+    )
+
+
+@app.exception_handler(ValidationException)
+async def _domain_validation_exception_handler(
+    request: Request, exc: ValidationException
+) -> JSONResponse:
+    """Map ValidationException → HTTP 422 using the standard error envelope."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "UNPROCESSABLE_ENTITY",
+                "message": exc.message,
+                "request_id": _request_id(request),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        },
+    )
+
+
+@app.exception_handler(InfrastructureException)
+async def _infrastructure_exception_handler(
+    request: Request, exc: InfrastructureException
+) -> JSONResponse:
+    """Map InfrastructureException → HTTP 500, logging the full traceback."""
+    logger.error(
+        "Infrastructure failure on %s %s — %s",
+        request.method,
+        request.url.path,
+        exc.message,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "A storage or database error occurred.",
+                "request_id": _request_id(request),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        },
+    )
+
+
 @app.exception_handler(StarletteHTTPException)
 async def _http_exception_handler(
     request: Request, exc: StarletteHTTPException
@@ -100,7 +188,12 @@ async def _validation_exception_handler(
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Wrap unexpected server errors in the standard error envelope."""
+    """Catch-all for unexpected server errors — log and return a safe 500."""
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method,
+        request.url.path,
+    )
     return JSONResponse(
         status_code=500,
         content={

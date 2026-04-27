@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.application.user.service import UserService
@@ -30,11 +30,4 @@ async def login_access_token(
 @router.post("/register", response_model=UserResponse)
 async def register_user(session: DbSession, user_in: UserCreate) -> UserResponse:
     user_service = UserService(session)
-    try:
-        user = await user_service.create_user(user_in)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
-    return user
+    return await user_service.create_user(user_in)

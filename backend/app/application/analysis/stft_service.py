@@ -40,7 +40,11 @@ import numpy as np
 import polars as pl
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictException, NotFoundException
+from app.core.exceptions import (
+    ConflictException,
+    NotFoundException,
+    ValidationException,
+)
 from app.domain.analysis.schemas import (
     SpectrogramConfig,
     SpectrogramResponse,
@@ -97,7 +101,7 @@ class STFTService:
         t_max = float(timestamps[-1])
         end_s = min(config.end_s, t_max)
         if config.start_s >= end_s:
-            raise ValueError(
+            raise ValidationException(
                 f"start_s ({config.start_s}) is at or beyond the signal end "
                 f"({t_max:.3f} s).  Choose a smaller start_s."
             )
@@ -158,7 +162,7 @@ class STFTService:
         n_time, n_freq = result.magnitude_db.shape
         payload_mb = (n_time * n_freq * 8) / (1024 * 1024)
         if _MAX_RESPONSE_MB > 0 and payload_mb > _MAX_RESPONSE_MB:
-            raise ValueError(
+            raise ValidationException(
                 f"Spectrogram payload ({payload_mb:.1f} MB) exceeds the "
                 f"{_MAX_RESPONSE_MB:.0f} MB limit.  Increase hop_size or "
                 "reduce window_size to shrink the response."
@@ -256,13 +260,13 @@ def _infer_sampling_rate(timestamps: np.ndarray) -> float:
         ValueError: If fewer than 2 timestamps are provided.
     """
     if len(timestamps) < 2:
-        raise ValueError(
+        raise ValidationException(
             "Cannot infer sampling rate: signal must contain at least 2 samples"
         )
     diffs = np.diff(timestamps)
     median_dt = float(np.median(diffs))
     if median_dt <= 0:
-        raise ValueError(
+        raise ValidationException(
             f"Median inter-sample interval is non-positive ({median_dt:.6f} s). "
             "Timestamps must be monotonically increasing."
         )
