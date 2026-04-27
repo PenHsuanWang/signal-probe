@@ -12,7 +12,7 @@ interface Props {
   t0EpochS: number | null;
   brushWindow: ExplorationWindow | null;
   xRange: [number, number] | null;
-  onXRangeChange: (r: [number, number]) => void;
+  onXRangeChange: (r: [number, number] | null) => void;
 }
 
 export default function SpectrogramChart({
