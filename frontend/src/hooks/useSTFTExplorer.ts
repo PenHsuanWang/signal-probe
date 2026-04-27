@@ -159,7 +159,7 @@ export interface UseSTFTExplorerReturn {
   samplingRateHz: number;
   hopSize: number;
   selectChannel: (channel: string) => void;
-  handleBrushSelect: (startS: number, endS: number) => void;
+  handleBrushSelect: (startS: number, endS: number, explicitChannel?: string) => void;
   clearBrush: () => void;
   lockWindow: () => void;
   unlockWindow: () => void;
@@ -249,13 +249,10 @@ export function useSTFTExplorer(
       debounceTimer.current = setTimeout(async () => {
         debounceTimer.current = null;
         const channel = explicitChannel ?? channelRef.current;
-        console.log('[DEBUG] handleBrushSelect fired! channel=', channel, 'startS=', startS, 'endS=', endS, 'samplingRate=', samplingRateRef.current);
         if (!channel) return;
 
         const samples = Math.round((endS - startS) * samplingRateRef.current);
         const wSize = nextPowerOfTwo(Math.max(1, samples));
-
-        console.log('[DEBUG] fft size:', wSize, 'samples:', samples);
 
         const ac = new AbortController();
         fftAbort.current = ac;
@@ -273,10 +270,8 @@ export function useSTFTExplorer(
             },
             ac.signal,
           );
-          console.log('[DEBUG] fetchSTFT success:', result);
           dispatch({ type: 'FFT_SUCCESS', result });
         } catch (err: unknown) {
-          console.error('[DEBUG] fetchSTFT error:', err);
           if (axios.isCancel(err)) return;
           if (err instanceof Error && err.name === 'AbortError') return;
           const msg =
