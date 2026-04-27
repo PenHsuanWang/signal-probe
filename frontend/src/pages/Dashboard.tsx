@@ -72,6 +72,7 @@ export default function Dashboard() {
   useEffect(() => {
     const sigId = searchParams.get('signalId');
     if (sigId && signals.some((s) => s.id === sigId && s.status === 'COMPLETED')) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedId(sigId);
       setViewMode('signal');
     }

@@ -27,6 +27,7 @@ export default function STFTExplorerPanel({
   onXRangeChange,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
+  const [dragMode, setDragMode] = useState<'select' | 'zoom' | 'pan'>('select');
 
   // When the signal has an absolute start time, use a date axis (same as
   // MultiChannelMacroChart) so both charts display the same x-axis format.
@@ -133,7 +134,7 @@ export default function STFTExplorerPanel({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const l: Record<string, any> = {
       ...base,
-      dragmode: 'select',
+      dragmode: dragMode,
       margin: { t: 8, r: 12, l: 52, b: 44 },
       shapes: brushShape as Plotly.Shape[],
       selectdirection: 'h',
@@ -167,7 +168,7 @@ export default function STFTExplorerPanel({
       },
     };
     return l as Partial<Plotly.Layout>;
-  }, [theme, brushShape, axisColor, gridColor, xRange, hasDateAxis, toDateStr]);
+  }, [theme, brushShape, axisColor, gridColor, xRange, hasDateAxis, toDateStr, dragMode]);
 
   const handleSelected = useCallback(
     (event: Readonly<Plotly.PlotSelectionEvent>) => {
@@ -179,10 +180,12 @@ export default function STFTExplorerPanel({
       const start = hasDateAxis ? fromDateStr(rx[0]) : Number(rx[0]);
       const end = hasDateAxis ? fromDateStr(rx[1]) : Number(rx[1]);
       if (isNaN(start) || isNaN(end) || end <= start) return;
+      let targetChannel = state.channel;
       if (state.channel === null && channelNames[0]) {
+        targetChannel = channelNames[0];
         selectChannel(channelNames[0]);
       }
-      handleBrushSelect(start, end);
+      handleBrushSelect(start, end, targetChannel ?? undefined);
     },
     [state.channel, channelNames, selectChannel, handleBrushSelect, hasDateAxis, fromDateStr],
   );
@@ -201,6 +204,16 @@ export default function STFTExplorerPanel({
   const handleExplorationRelayout = useCallback(
     (event: Plotly.PlotRelayoutEvent) => {
       const ev = event as unknown as Record<string, unknown>;
+
+      if (ev.dragmode) {
+        setDragMode(ev.dragmode as 'select' | 'zoom' | 'pan');
+      }
+
+      if (ev['xaxis.autorange'] === true) {
+        onXRangeChange(null);
+        return;
+      }
+
       const r0 = ev['xaxis.range[0]'];
       const r1 = ev['xaxis.range[1]'];
       if (r0 !== undefined && r1 !== undefined) {
@@ -283,8 +296,9 @@ export default function STFTExplorerPanel({
               style={{ width: '100%', height: '200px' }}
               config={{
                 displayModeBar: true,
+                scrollZoom: true,
                 modeBarButtonsToRemove: [
-                  'zoom2d', 'pan2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d',
+                  'lasso2d',
                   'autoScale2d', 'hoverClosestCartesian', 'hoverCompareCartesian',
                   'toggleSpikelines',
                 ] as Plotly.ModeBarDefaultButtons[],

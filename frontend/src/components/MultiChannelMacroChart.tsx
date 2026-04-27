@@ -190,7 +190,7 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
     });
 
     return l as Partial<Plotly.Layout>;
-  }, [channels, domains, macro.runs, hasDateAxis, toXValue, theme]);
+  }, [channels, domains, macro.runs, macro.channel_units, hasDateAxis, toXValue, theme]);
 
   const height = Math.max(220, channels.length * 140 + 80);
 

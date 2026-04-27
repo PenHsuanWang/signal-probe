@@ -1,4 +1,4 @@
-import { useReducer, useCallback, useRef, useMemo } from 'react';
+import { useReducer, useCallback, useRef, useMemo, useEffect } from 'react';
 import axios from 'axios';
 import { fetchSTFT, fetchSpectrogram } from '../lib/api';
 import type {
@@ -188,8 +188,17 @@ export function useSTFTExplorer(
   // Latest-value refs for use inside async closures (avoid stale state)
   const channelRef = useRef<string | null>(null);
   const windowFnRef = useRef<WindowFunction>('hann');
-  channelRef.current = state.channel;
-  windowFnRef.current = state.windowFn;
+  useEffect(() => {
+    channelRef.current = state.channel;
+    windowFnRef.current = state.windowFn;
+  });
+
+  // Sync initialChannel if state.channel is currently null
+  useEffect(() => {
+    if (state.channel === null && initialChannel != null) {
+      dispatch({ type: 'SELECT_CHANNEL', channel: initialChannel });
+    }
+  }, [state.channel, initialChannel]);
 
   // Estimated sampling rate: use confirmed value from STFT response if available,
   // otherwise derive from macro time axis.
@@ -200,7 +209,9 @@ export function useSTFTExplorer(
   }, [state.fftResult, macroX]);
 
   const samplingRateRef = useRef(samplingRateHz);
-  samplingRateRef.current = samplingRateHz;
+  useEffect(() => {
+    samplingRateRef.current = samplingRateHz;
+  });
 
   // Derived: window size from brush duration
   const windowSize = useMemo(() => {
@@ -226,7 +237,7 @@ export function useSTFTExplorer(
   }, []);
 
   const handleBrushSelect = useCallback(
-    (startS: number, endS: number) => {
+    (startS: number, endS: number, explicitChannel?: string) => {
       dispatch({ type: 'SET_BRUSH', window: { start_s: startS, end_s: endS } });
 
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -237,11 +248,14 @@ export function useSTFTExplorer(
 
       debounceTimer.current = setTimeout(async () => {
         debounceTimer.current = null;
-        const channel = channelRef.current;
+        const channel = explicitChannel ?? channelRef.current;
+        console.log('[DEBUG] handleBrushSelect fired! channel=', channel, 'startS=', startS, 'endS=', endS, 'samplingRate=', samplingRateRef.current);
         if (!channel) return;
 
         const samples = Math.round((endS - startS) * samplingRateRef.current);
         const wSize = nextPowerOfTwo(Math.max(1, samples));
+
+        console.log('[DEBUG] fft size:', wSize, 'samples:', samples);
 
         const ac = new AbortController();
         fftAbort.current = ac;
@@ -250,17 +264,17 @@ export function useSTFTExplorer(
         try {
           const result = await fetchSTFT(
             signalId,
-            {
-              channel_name: channel,
-              start_s: startS,
-              end_s: endS,
-              window_fn: windowFnRef.current,
-              window_size: wSize,
-            },
+            channel,
+            startS,
+            endS,
+            wSize,
+            windowFnRef.current,
             ac.signal,
           );
+          console.log('[DEBUG] fetchSTFT success:', result);
           dispatch({ type: 'FFT_SUCCESS', result });
         } catch (err: unknown) {
+          console.error('[DEBUG] fetchSTFT error:', err);
           if (axios.isCancel(err)) return;
           if (err instanceof Error && err.name === 'AbortError') return;
           const msg =
