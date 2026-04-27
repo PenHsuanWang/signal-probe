@@ -264,11 +264,13 @@ export function useSTFTExplorer(
         try {
           const result = await fetchSTFT(
             signalId,
-            channel,
-            startS,
-            endS,
-            wSize,
-            windowFnRef.current,
+            {
+              channel_name: channel,
+              start_s: startS,
+              end_s: endS,
+              window_fn: windowFnRef.current,
+              window_size: wSize,
+            },
             ac.signal,
           );
           console.log('[DEBUG] fetchSTFT success:', result);
