@@ -407,6 +407,63 @@ class SignalService:
 
         return results
 
+    # ── Annotations & Export ────────────────────────────────────────────────
+
+    async def update_run_annotation(
+        self, signal_id: uuid.UUID, run_id: uuid.UUID, annotation: str | None
+    ) -> bool:
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise NotFoundException("Signal not found")
+        return await self.repo.update_run_annotation(signal_id, run_id, annotation)
+
+    async def export_features_csv(self, signal_id: uuid.UUID) -> str:
+        signal = await self.repo.get_signal(signal_id)
+        if signal is None:
+            raise NotFoundException("Signal not found")
+        if signal.status != ProcessingStatus.COMPLETED:
+            raise ConflictException("Signal is not ready")
+
+        runs = await self.repo.get_all_runs(signal_id)
+
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        headers = [
+            "run_index",
+            "start_x",
+            "end_x",
+            "duration_seconds",
+            "value_max",
+            "value_min",
+            "value_mean",
+            "value_variance",
+            "annotation",
+        ]
+        writer.writerow(headers)
+
+        for r in runs:
+            writer.writerow(
+                [
+                    r.run_index,
+                    f"{r.start_x:.6f}",
+                    f"{r.end_x:.6f}",
+                    f"{r.duration_seconds:.6f}"
+                    if r.duration_seconds is not None
+                    else "",
+                    f"{r.value_max:.6f}" if r.value_max is not None else "",
+                    f"{r.value_min:.6f}" if r.value_min is not None else "",
+                    f"{r.value_mean:.6f}" if r.value_mean is not None else "",
+                    f"{r.value_variance:.6f}" if r.value_variance is not None else "",
+                    r.annotation or "",
+                ]
+            )
+
+        return output.getvalue()
+
     # ── Helpers ─────────────────────────────────────────────────────────────
 
     @staticmethod

@@ -48,6 +48,7 @@ class RunSegment(Base):
     value_min: Mapped[float | None] = mapped_column(Double, nullable=True)
     value_mean: Mapped[float | None] = mapped_column(Double, nullable=True)
     value_variance: Mapped[float | None] = mapped_column(Double, nullable=True)
+    annotation: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     signal: Mapped["SignalMetadata"] = relationship(
         "SignalMetadata", back_populates="runs"

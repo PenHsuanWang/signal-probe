@@ -284,3 +284,39 @@ class SignalRepository:
             raise InfrastructureException(
                 "Database error while fetching run segments."
             ) from exc
+
+    async def get_all_runs(self, signal_id: uuid.UUID) -> list[RunSegment]:
+        try:
+            result = await self.session.execute(
+                select(RunSegment)
+                .where(RunSegment.signal_id == signal_id)
+                .order_by(RunSegment.run_index)
+            )
+            return list(result.scalars().all())
+        except SQLAlchemyError as exc:
+            logger.error(
+                "Database error fetching all runs for signal %s: %s", signal_id, exc
+            )
+            raise InfrastructureException(
+                "Database error while fetching all run segments."
+            ) from exc
+
+    async def update_run_annotation(
+        self, signal_id: uuid.UUID, run_id: uuid.UUID, annotation: str | None
+    ) -> bool:
+        try:
+            result = await self.session.execute(
+                update(RunSegment)
+                .where(RunSegment.id == run_id, RunSegment.signal_id == signal_id)
+                .values(annotation=annotation, updated_at=func.now())
+            )
+            await self.session.commit()
+            return result.rowcount > 0
+        except SQLAlchemyError as exc:
+            await self.session.rollback()
+            logger.error(
+                "Database error updating annotation for run %s: %s", run_id, exc
+            )
+            raise InfrastructureException(
+                "Database error while updating run annotation."
+            ) from exc

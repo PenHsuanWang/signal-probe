@@ -188,5 +188,10 @@ class RunChunkResponse(BaseModel):
     value_min: float | None
     value_mean: float | None
     value_variance: float | None
+    annotation: str | None = None
     x: list[float]
     channels: list[ChannelChunkData]
+
+
+class AnnotationUpdateRequest(BaseModel):
+    annotation: str | None = Field(None, max_length=255)
