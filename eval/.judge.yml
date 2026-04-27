@@ -1,0 +1,26 @@
+# ── LLM Judge Configuration ───────────────────────────────────────────────────
+# Set OPENAI_API_KEY or ANTHROPIC_API_KEY in environment / CI secrets.
+
+judge:
+  # Model for the judge LLM.
+  # OpenAI:    gpt-4o | gpt-4o-mini
+  # Anthropic: claude-3-5-sonnet-20241022 | claude-3-haiku-20240307
+  model: "gpt-4o"
+  temperature: 0          # deterministic scoring
+  max_diff_chars: 40000   # truncate diffs beyond this to fit context window
+  prompt_version: "1.0"   # bump when rubric or prompt changes (tracked in scorecard)
+
+# ── Pass/fail thresholds (0-10 scale) ─────────────────────────────────────────
+thresholds:
+  instruction_adherence: 6      # below this → CI failure
+  architectural_alignment: 6    # below this → CI failure
+  code_quality: 5               # below this → CI failure
+  vibe_check_blocks: false      # true = vibe failure also blocks CI
+  fail_on_blocked: true         # overall_verdict == BLOCKED always fails
+
+# ── Behaviour flags ────────────────────────────────────────────────────────────
+behavior:
+  post_comment: true            # post scorecard back to PR/MR
+  save_scorecard: true          # write JSON to scorecard_dir for regression tracking
+  scorecard_dir: ".judge-scores"
+  soft_gate: false              # true = never exit 1 (warn-only mode for calibration)
