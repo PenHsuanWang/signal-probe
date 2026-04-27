@@ -1,0 +1,28 @@
+--- frontend/src/hooks/useSTFTExplorer.ts
++++ frontend/src/hooks/useSTFTExplorer.ts
+@@ -242,6 +242,7 @@
+       debounceTimer.current = setTimeout(async () => {
+         debounceTimer.current = null;
+         const channel = channelRef.current;
++        console.log('DEBUG handleBrushSelect timeout: channel=', channel, 'startS=', startS, 'endS=', endS);
+         if (!channel) return;
+
+         const samples = Math.round((endS - startS) * samplingRateRef.current);
+@@ -254,9 +255,11 @@
+         try {
+           const result = await fetchSTFT(
+             signalId,
+             channel,
+             startS,
+             endS,
+             wSize,
+             windowFnRef.current,
+             ac.signal,
+           );
++          console.log('DEBUG fetchSTFT success');
+           dispatch({ type: 'FFT_SUCCESS', result });
+         } catch (err: unknown) {
++          console.error('DEBUG fetchSTFT error:', err);
+           if (axios.isCancel(err)) return;
+           if (err instanceof Error && err.name === 'AbortError') return;
+           const msg =

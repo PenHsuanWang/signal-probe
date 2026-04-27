@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Plot } from '../lib/plot';
 import { buildChartTheme } from '../lib/chartTheme';
 import type { SpectrogramResponse, ExplorationWindow } from '../types/signal';
@@ -29,10 +29,13 @@ export default function SpectrogramChart({
   const axisColor = isLight ? '#1a1a1a' : '#9ca3af';
   const gridColor = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.05)';
 
-  const toX = useMemo((): ((s: number) => number | string) => {
-    if (t0EpochS == null) return (s: number) => s;
-    return (s: number) => new Date((t0EpochS + s) * 1000).toISOString();
-  }, [t0EpochS]);
+  const toX = useCallback(
+    (s: number): number | string => {
+      if (t0EpochS == null) return s;
+      return new Date((t0EpochS + s) * 1000).toISOString();
+    },
+    [t0EpochS],
+  );
 
   const traces = useMemo((): Plotly.Data[] => {
     if (!result) return [];
@@ -119,10 +122,16 @@ export default function SpectrogramChart({
     };
 
     return l as Partial<Plotly.Layout>;
-  }, [result, theme, axisColor, gridColor, brushWindow, xRange, toX, t0EpochS]);
+  }, [theme, axisColor, gridColor, brushWindow, xRange, toX, t0EpochS]);
 
   const handleRelayout = (event: Plotly.PlotRelayoutEvent) => {
     const ev = event as unknown as Record<string, unknown>;
+
+    if (ev['xaxis.autorange'] === true) {
+      onXRangeChange(null);
+      return;
+    }
+
     const r0 = ev['xaxis.range[0]'];
     const r1 = ev['xaxis.range[1]'];
     if (r0 !== undefined && r1 !== undefined) {
@@ -169,6 +178,7 @@ export default function SpectrogramChart({
         style={{ width: '100%', height: '320px' }}
         config={{
           displayModeBar: true,
+          scrollZoom: true,
           modeBarButtonsToRemove: ['select2d', 'lasso2d'] as Plotly.ModeBarDefaultButtons[],
           displaylogo: false,
         }}
