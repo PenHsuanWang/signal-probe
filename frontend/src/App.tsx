@@ -2,11 +2,14 @@ import { Component, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import MainLayout from './layouts/MainLayout';
-import Dashboard from './pages/Dashboard';
+import SignalDetailLayout from './layouts/SignalDetailLayout';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import SignalsPage from './pages/SignalsPage';
+import SignalPreviewPage from './pages/SignalPreviewPage';
+import FrequencyAnalysisPage from './pages/FrequencyAnalysisPage';
 import GroupsPage from './pages/GroupsPage';
+import GroupDetailPage from './pages/GroupDetailPage';
 import SettingsPage from './pages/SettingsPage';
 
 // ── Global error boundary ────────────────────────────────────────────────────
@@ -54,12 +57,17 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/" element={<MainLayout />}>
-              <Route index element={<Dashboard />} />
+              <Route index element={<Navigate to="/signals" replace />} />
               <Route path="signals" element={<SignalsPage />} />
+              <Route path="signals/:id" element={<SignalDetailLayout />}>
+                <Route index element={<SignalPreviewPage />} />
+                <Route path="analysis" element={<FrequencyAnalysisPage />} />
+              </Route>
               <Route path="groups" element={<GroupsPage />} />
+              <Route path="groups/:id" element={<GroupDetailPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/signals" replace />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   Layers, Plus, Trash2, ChevronDown, ChevronRight,
-  Check, X, Clock, Pencil,
+  Check, X, Clock, Pencil, BarChart2,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useSignals } from '../context/SignalsContext';
 import {
   listGroups, createGroup, updateGroup, deleteGroup,
@@ -130,6 +131,7 @@ interface GroupCardProps {
 }
 
 function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [addSignalId, setAddSignalId] = useState('');
@@ -187,6 +189,16 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
         <span className="text-[10px] font-sans flex-shrink-0" style={{ color: 'var(--sp-text-tertiary)' }}>
           {group.members.length} signal{group.members.length !== 1 ? 's' : ''}
         </span>
+
+        {/* View Overlay → */}
+        <button
+          onClick={() => navigate(`/groups/${group.id}`)}
+          className="flex items-center gap-1 text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors flex-shrink-0"
+          title="View time-aligned overlay chart"
+        >
+          <BarChart2 size={11} />
+          View Overlay →
+        </button>
 
         <button
           onClick={() => setEditingName(true)}
