@@ -133,3 +133,12 @@ class SpectrogramResponse(BaseModel):
         False,
         description="True when the time axis was automatically reduced to 2,000 bins",
     )
+    t0_epoch_s: float | None = Field(
+        None,
+        description=(
+            "Unix epoch seconds of the signal's first sample (t=0). "
+            "Present when the signal has an absolute datetime time column. "
+            "Reconstruct absolute datetime for time_bin i as: "
+            "datetime.utcfromtimestamp(t0_epoch_s + time_bins_s[i])"
+        ),
+    )

@@ -171,6 +171,7 @@ class STFTService:
         timestamps, amplitudes = _read_two_columns(
             parquet_path, "timestamp_s", channel_name
         )
+        t0_epoch_s = _read_t0_epoch_s(parquet_path)
 
         # Resolve effective end time (clamp to signal boundary).
         t_max = float(timestamps[-1])
@@ -237,6 +238,7 @@ class STFTService:
             magnitude_db=result.magnitude_db.tolist(),
             sampling_rate_hz=sampling_rate_hz,
             downsampled=result.downsampled,
+            t0_epoch_s=t0_epoch_s,
         )
 
     # ── Private helpers ──────────────────────────────────────────────────────
@@ -303,6 +305,25 @@ def _read_two_columns(
     timestamps = df[ts_col].cast(pl.Float64).to_numpy()
     amplitudes = df[channel_col].cast(pl.Float64).to_numpy()
     return timestamps, amplitudes
+
+
+def _read_t0_epoch_s(parquet_path: str) -> float | None:
+    """Read the ``t0_epoch_s`` constant column from a Parquet file, if present.
+
+    The pipeline stores ``t0_epoch_s`` as a constant column (one value per row)
+    when the signal has an absolute datetime time column.  Reading only the
+    first row avoids loading the full column into memory.
+
+    Returns:
+        Unix epoch seconds of the signal's first sample, or ``None`` when the
+        column is absent (relative-time signals).
+    """
+    schema = pl.scan_parquet(parquet_path).collect_schema()
+    if "t0_epoch_s" not in schema:
+        return None
+    df = pl.scan_parquet(parquet_path).select(["t0_epoch_s"]).head(1).collect()
+    val = df["t0_epoch_s"][0]
+    return float(val) if val is not None else None
 
 
 def _infer_sampling_rate(timestamps: np.ndarray) -> float:

@@ -196,6 +196,10 @@ export interface SpectrogramResponse {
   magnitude_db: number[][];
   sampling_rate_hz: number;
   downsampled: boolean;
+  /** Unix epoch seconds of the signal's first sample (t=0). Present when the
+   *  signal has an absolute datetime time column. Use to reconstruct absolute
+   *  datetime: new Date((t0_epoch_s + time_bins_s[i]) * 1000) */
+  t0_epoch_s: number | null;
 }
 
 export interface ExplorationWindow {

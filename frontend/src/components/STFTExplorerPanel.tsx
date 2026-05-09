@@ -1,7 +1,8 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Plot } from '../lib/plot';
 import { buildChartTheme } from '../lib/chartTheme';
+import { parsePlotlyDate } from '../lib/dateUtils';
 import { useSTFTExplorer } from '../hooks/useSTFTExplorer';
 import FFTSpectrumChart from './FFTSpectrumChart';
 import SpectrogramChart from './SpectrogramChart';
@@ -39,24 +40,7 @@ export default function STFTExplorerPanel({
     [t0],
   );
   const fromDateStr = useCallback(
-    (d: string | number): number => {
-      let ms: number;
-      if (typeof d === 'number') {
-        // Plotly can return epoch-ms as a raw number for date axes.
-        ms = d;
-      } else {
-        // Plotly's internal date format: 'YYYY-MM-DD HH:MM:SS.mmm' — UTC value
-        // but WITHOUT a timezone marker. new Date() parses space-separated date
-        // strings as LOCAL time in V8/Chrome, causing a timezone-offset shift in
-        // non-UTC locales (e.g. UTC+8 → 8 h shift in start_s / end_s).
-        // Normalise to strict ISO-8601 UTC before parsing to fix this.
-        const s = String(d).trim();
-        const withT = s.includes('T') ? s : s.replace(' ', 'T');
-        const utc = /[Zz]$|[+-]\d\d:\d\d$/.test(withT) ? withT : withT + 'Z';
-        ms = new Date(utc).getTime();
-      }
-      return ms / 1000 - t0;
-    },
+    (d: string | number): number => parsePlotlyDate(d, t0),
     [t0],
   );
 
@@ -81,6 +65,23 @@ export default function STFTExplorerPanel({
   // internally during box-select. Without this guard the debounce timer is
   // cleared before it fires and the FFT never runs on the first brush.
   const lastSelectedAt = useRef<number>(0);
+
+  // When the spectrogram result first arrives, zoom both the signal chart and
+  // the spectrogram to the brush window so the generated data is immediately
+  // visible and aligned.  Without this, the x-axis could remain at whatever
+  // the previous signal-chart zoom level was (e.g. the full signal), making
+  // the spectrogram time bins look misaligned or invisible.
+  const prevPhaseRef = useRef(state.phase);
+  useEffect(() => {
+    if (
+      prevPhaseRef.current !== 'spectrogram_ready' &&
+      state.phase === 'spectrogram_ready' &&
+      state.window
+    ) {
+      onXRangeChange([state.window.start_s, state.window.end_s]);
+    }
+    prevPhaseRef.current = state.phase;
+  }, [state.phase, state.window, onXRangeChange]);
 
   // Auto-select first channel if none selected
   const activeChannel = state.channel ?? channelNames[0] ?? null;

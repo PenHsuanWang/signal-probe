@@ -242,6 +242,7 @@ const MOCK_SPECTROGRAM: SpectrogramResponse = {
   ],
   sampling_rate_hz: 1000,
   downsampled: false,
+  t0_epoch_s: null,
 };
 
 const MOCK_MACRO_X = Array.from({ length: 1001 }, (_, i) => i / 1000);
