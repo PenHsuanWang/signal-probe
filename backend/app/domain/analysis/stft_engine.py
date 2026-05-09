@@ -123,8 +123,9 @@ def compute_spectrogram(
     signal: np.ndarray,
     sampling_rate_hz: float,
     config: SpectrogramConfig,
+    t_start: float = 0.0,
 ) -> SpectrogramResult:
-    """Compute a sliding-window STFT spectrogram over the full *signal*.
+    """Compute a sliding-window STFT spectrogram over *signal*.
 
     Each frame of length ``config.window_size`` is advanced by
     ``config.hop_size`` samples.  Magnitudes are converted to dBFS:
@@ -135,9 +136,13 @@ def compute_spectrogram(
     the result.
 
     Args:
-        signal: Full 1-D signal array (any numeric dtype).
+        signal: 1-D signal array for the segment of interest (any numeric dtype).
         sampling_rate_hz: Uniform sampling rate in Hz (must be > 0).
         config: Spectrogram parameters (window function, size, hop size).
+        t_start: Absolute start time in seconds of the first sample in *signal*.
+            Frame-centre timestamps are computed as
+            ``t_start + (frame_start_index + window_size // 2) / sampling_rate_hz``.
+            Defaults to ``0.0`` (full-signal mode, backward-compatible).
 
     Returns:
         :class:`SpectrogramResult` with ``time_bins_s``, ``frequency_bins_hz``,
@@ -196,7 +201,7 @@ def compute_spectrogram(
     )  # shape: (n_active, n_freqs)
 
     freqs = _scipy_fft.rfftfreq(size, d=1.0 / sampling_rate_hz)
-    time_bins = (active_starts + size // 2) / sampling_rate_hz
+    time_bins = t_start + (active_starts + size // 2) / sampling_rate_hz
 
     # dBFS: normalise to peak magnitude across the entire output matrix.
     peak = magnitudes.max()

@@ -92,7 +92,7 @@ async def get_stft(
 @router.get(
     "/{signal_id}/analysis/spectrogram",
     response_model=SpectrogramResponse,
-    summary="Compute full-signal spectrogram",
+    summary="Compute windowed spectrogram",
     tags=["analysis"],
 )
 async def get_spectrogram(
@@ -115,16 +115,34 @@ async def get_spectrogram(
         ge=1,
         description="Number of samples to advance between successive frames",
     ),
+    start_s: float = Query(
+        0.0,
+        ge=0,
+        description="Segment start time in seconds from t=0 (default: 0 = beginning)",
+    ),
+    end_s: float | None = Query(
+        None,
+        gt=0,
+        description=(
+            "Segment end time in seconds from t=0; omit to analyse the full signal"
+        ),
+    ),
     session: DbSession = ...,
     storage: StorageDep = ...,
     current_user: CurrentUser = ...,
 ) -> SpectrogramResponse:
-    """Compute a sliding-window STFT spectrogram over the full signal.
+    """Compute a sliding-window STFT spectrogram over an optional time window.
 
     Returns a time × frequency magnitude matrix in dBFS.  When the natural
     number of time bins exceeds 2,000, the time axis is uniformly downsampled
     and `downsampled: true` is set in the response.
 
+    The `time_bins_s` values in the response are in the same elapsed-seconds
+    coordinate as the signal's `timestamp_s` column — they reflect the absolute
+    position within the signal, not the offset from `start_s`.
+
+    - **start_s / end_s**: Optional time bounds. Omitting both analyses the full
+      signal. `end_s` is clamped to the signal duration if it exceeds it.
     - **hop_size**: Controls overlap between frames. Smaller values produce
       more time bins (finer time resolution) at higher compute cost.
     - **window_size**: Must be a power of 2 in the range [4, 131072].
@@ -134,6 +152,8 @@ async def get_spectrogram(
         window_fn=window_fn,
         window_size=window_size,
         hop_size=hop_size,
+        start_s=start_s,
+        end_s=end_s,
     )
 
     svc = STFTService(session, storage)

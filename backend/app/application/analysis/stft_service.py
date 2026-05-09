@@ -109,10 +109,20 @@ class STFTService:
         mask = (timestamps >= config.start_s) & (timestamps <= end_s)
         segment = amplitudes[mask]
 
+        if len(segment) == 0:
+            raise ValidationException(
+                f"No samples found in the time window "
+                f"[{config.start_s:.3f} s, {end_s:.3f} s]. "
+                "Check that the selected range overlaps with the signal."
+            )
+
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            get_executor(), compute_stft, segment, sampling_rate_hz, config
-        )
+        try:
+            result = await loop.run_in_executor(
+                get_executor(), compute_stft, segment, sampling_rate_hz, config
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
 
         return STFTResponse(
             signal_id=str(signal_id),
@@ -131,12 +141,18 @@ class STFTService:
         config: SpectrogramConfig,
         owner_id: uuid.UUID,
     ) -> SpectrogramResponse:
-        """Compute the full-signal sliding-window spectrogram.
+        """Compute a windowed sliding-window STFT spectrogram.
+
+        When ``config.start_s`` / ``config.end_s`` are provided the signal is
+        sliced to that range before analysis.  The returned ``time_bins_s``
+        values are in the same elapsed-seconds coordinate as the Parquet
+        ``timestamp_s`` column (i.e. absolute signal time, not relative to the
+        slice start).
 
         Args:
             signal_id: UUID of the signal to analyse.
             channel_name: Name of the channel column in the Parquet file.
-            config: Spectrogram parameters (window function, size, hop size).
+            config: Spectrogram parameters including optional time window.
             owner_id: ID of the authenticated user (ownership check).
 
         Returns:
@@ -145,18 +161,64 @@ class STFTService:
         Raises:
             NotFoundException: Signal or channel not found.
             ConflictException: Signal is not in COMPLETED state.
+            ValidationException: Time window is invalid or too short.
             ValueError: Response payload would exceed STFT_MAX_RESPONSE_MB.
         """
         parquet_path, sampling_rate_hz = await self._load_channel_meta(
             signal_id, channel_name, owner_id
         )
 
-        _, amplitudes = _read_two_columns(parquet_path, "timestamp_s", channel_name)
+        timestamps, amplitudes = _read_two_columns(
+            parquet_path, "timestamp_s", channel_name
+        )
+        t0_epoch_s = _read_t0_epoch_s(parquet_path)
+
+        # Resolve effective end time (clamp to signal boundary).
+        t_max = float(timestamps[-1])
+        end_s = min(config.end_s, t_max) if config.end_s is not None else t_max
+
+        if config.start_s >= end_s:
+            raise ValidationException(
+                f"start_s ({config.start_s}) is at or beyond the signal end "
+                f"({t_max:.3f} s).  Choose a smaller start_s."
+            )
+
+        # Slice to the requested time window.
+        mask = (timestamps >= config.start_s) & (timestamps <= end_s)
+        segment = amplitudes[mask]
+
+        if len(segment) == 0:
+            raise ValidationException(
+                f"No samples found in the time window "
+                f"[{config.start_s:.3f} s, {end_s:.3f} s]. "
+                "Check that the selected range overlaps with the signal."
+            )
+
+        if len(segment) < config.window_size:
+            raise ValidationException(
+                f"The selected time window contains only {len(segment)} sample(s), "
+                f"but window_size ({config.window_size}) requires at least "
+                f"{config.window_size} samples. "
+                f"Reduce window_size to ≤ {len(segment)} or select a longer "
+                "time window."
+            )
+
+        # t_start is the actual first timestamp of the slice — used by the
+        # engine to offset frame-centre times into absolute signal coordinates.
+        t_start = float(timestamps[mask][0])
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            get_executor(), compute_spectrogram, amplitudes, sampling_rate_hz, config
-        )
+        try:
+            result = await loop.run_in_executor(
+                get_executor(),
+                compute_spectrogram,
+                segment,
+                sampling_rate_hz,
+                config,
+                t_start,
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
 
         # Payload size guard (n_time × n_freq × 8 bytes per float64).
         n_time, n_freq = result.magnitude_db.shape
@@ -176,6 +238,7 @@ class STFTService:
             magnitude_db=result.magnitude_db.tolist(),
             sampling_rate_hz=sampling_rate_hz,
             downsampled=result.downsampled,
+            t0_epoch_s=t0_epoch_s,
         )
 
     # ── Private helpers ──────────────────────────────────────────────────────
@@ -242,6 +305,25 @@ def _read_two_columns(
     timestamps = df[ts_col].cast(pl.Float64).to_numpy()
     amplitudes = df[channel_col].cast(pl.Float64).to_numpy()
     return timestamps, amplitudes
+
+
+def _read_t0_epoch_s(parquet_path: str) -> float | None:
+    """Read the ``t0_epoch_s`` constant column from a Parquet file, if present.
+
+    The pipeline stores ``t0_epoch_s`` as a constant column (one value per row)
+    when the signal has an absolute datetime time column.  Reading only the
+    first row avoids loading the full column into memory.
+
+    Returns:
+        Unix epoch seconds of the signal's first sample, or ``None`` when the
+        column is absent (relative-time signals).
+    """
+    schema = pl.scan_parquet(parquet_path).collect_schema()
+    if "t0_epoch_s" not in schema:
+        return None
+    df = pl.scan_parquet(parquet_path).select(["t0_epoch_s"]).head(1).collect()
+    val = df["t0_epoch_s"][0]
+    return float(val) if val is not None else None
 
 
 def _infer_sampling_rate(timestamps: np.ndarray) -> float:

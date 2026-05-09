@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { Plot } from '../lib/plot';
 import { buildChartTheme } from '../lib/chartTheme';
+import { parsePlotlyDate } from '../lib/dateUtils';
 import type { SpectrogramResponse, ExplorationWindow } from '../types/signal';
 import type { Theme } from '../context/ThemeContext';
 
@@ -29,12 +30,17 @@ export default function SpectrogramChart({
   const axisColor = isLight ? '#1a1a1a' : '#9ca3af';
   const gridColor = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.05)';
 
+  // Prefer t0_epoch_s embedded in the spectrogram response (self-contained and
+  // always in sync with the signal data).  Fall back to the prop sourced from
+  // macroData for backwards compatibility with older cached results.
+  const effectiveT0 = result?.t0_epoch_s ?? t0EpochS;
+
   const toX = useCallback(
     (s: number): number | string => {
-      if (t0EpochS == null) return s;
-      return new Date((t0EpochS + s) * 1000).toISOString();
+      if (effectiveT0 == null) return s;
+      return new Date((effectiveT0 + s) * 1000).toISOString();
     },
-    [t0EpochS],
+    [effectiveT0],
   );
 
   const traces = useMemo((): Plotly.Data[] => {
@@ -57,11 +63,11 @@ export default function SpectrogramChart({
           tickfont: { size: 9, color: axisColor },
         },
         hovertemplate:
-          (t0EpochS == null ? 'Time: %{x:.3f} s' : 'Time: %{x}') +
+          (effectiveT0 == null ? 'Time: %{x:.3f} s' : 'Time: %{x}') +
           '<br>Freq: %{y:.2f} Hz<br>%{z:.1f} dBFS<extra></extra>',
       } as Plotly.Data,
     ];
-  }, [result, toX, axisColor, t0EpochS]);
+  }, [result, toX, axisColor, effectiveT0]);
 
   const layout = useMemo((): Partial<Plotly.Layout> => {
     const base = buildChartTheme(theme);
@@ -93,7 +99,7 @@ export default function SpectrogramChart({
         color: axisColor,
         gridcolor: gridColor,
         title: {
-          text: t0EpochS == null ? 'Time (s)' : 'Date / Time',
+          text: effectiveT0 == null ? 'Time (s)' : 'Date / Time',
           font: { size: 10, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
         },
         tickfont: { size: 9, family: 'Inter, ui-sans-serif, sans-serif', color: axisColor },
@@ -102,7 +108,7 @@ export default function SpectrogramChart({
         linecolor: axisColor,
         linewidth: 1,
         showline: true,
-        ...(t0EpochS != null ? { type: 'date' } : {}),
+        ...(effectiveT0 != null ? { type: 'date' } : {}),
         ...(xRange ? { range: xRange.map((s) => toX(s)) } : {}),
       },
       yaxis: {
@@ -135,9 +141,12 @@ export default function SpectrogramChart({
     const r0 = ev['xaxis.range[0]'];
     const r1 = ev['xaxis.range[1]'];
     if (r0 !== undefined && r1 !== undefined) {
-      if (t0EpochS != null) {
-        const t0 = new Date(r0 as string).getTime() / 1000 - t0EpochS;
-        const t1 = new Date(r1 as string).getTime() / 1000 - t0EpochS;
+      if (effectiveT0 != null) {
+        // Use parsePlotlyDate to handle Plotly's space-separated date strings
+        // (returned without timezone marker) as UTC, preventing timezone-offset
+        // shifts in non-UTC locales.
+        const t0 = parsePlotlyDate(r0 as string | number, effectiveT0);
+        const t1 = parsePlotlyDate(r1 as string | number, effectiveT0);
         onXRangeChange([t0, t1]);
       } else {
         onXRangeChange([r0 as number, r1 as number]);

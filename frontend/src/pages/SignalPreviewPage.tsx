@@ -9,6 +9,7 @@ import { useRunChunks } from '../hooks/useRunChunks';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
 import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
+import { parsePlotlyDate } from '../lib/dateUtils';
 
 /**
  * Signal Preview page — /signals/:id
@@ -63,10 +64,13 @@ export default function SignalPreviewPage() {
       let x0: number | undefined;
       let x1: number | undefined;
       if (macroData.t0_epoch_s != null) {
-        const r0 = ev['xaxis.range[0]'] as string | undefined;
-        const r1 = ev['xaxis.range[1]'] as string | undefined;
-        x0 = r0 ? new Date(r0).getTime() / 1000 - macroData.t0_epoch_s : undefined;
-        x1 = r1 ? new Date(r1).getTime() / 1000 - macroData.t0_epoch_s : undefined;
+        const r0 = ev['xaxis.range[0]'] as string | number | undefined;
+        const r1 = ev['xaxis.range[1]'] as string | number | undefined;
+        // parsePlotlyDate normalises Plotly's space-separated date strings to
+        // strict ISO-8601 UTC before parsing, preventing timezone-offset shifts
+        // in non-UTC locales (e.g. UTC+8 would shift by 8 h otherwise).
+        x0 = r0 != null ? parsePlotlyDate(r0, macroData.t0_epoch_s) : undefined;
+        x1 = r1 != null ? parsePlotlyDate(r1, macroData.t0_epoch_s) : undefined;
       } else {
         x0 = ev['xaxis.range[0]'] as number | undefined;
         x1 = ev['xaxis.range[1]'] as number | undefined;
