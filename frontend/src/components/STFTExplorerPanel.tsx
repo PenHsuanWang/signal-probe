@@ -384,6 +384,21 @@ export default function STFTExplorerPanel({
               />
             </div>
           )}
+
+          {/* Spectrogram error banner — shown when generation fails (phase returns to 'locked') */}
+          {state.spectrogramError && state.phase === 'locked' && (
+            <div
+              className="rounded p-3 text-xs font-sans"
+              style={{
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.35)',
+                color: '#f87171',
+              }}
+            >
+              <span className="font-semibold">Spectrogram error: </span>
+              {state.spectrogramError}
+            </div>
+          )}
         </div>
       )}
     </div>

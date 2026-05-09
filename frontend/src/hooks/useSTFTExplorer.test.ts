@@ -329,3 +329,57 @@ describe('generateSpectrogram — time-range forwarding', () => {
     );
   });
 });
+
+// ── extractApiError — error message extraction ────────────────────────────────
+// extractApiError is an internal helper. We test it indirectly through the hook
+// by injecting a rejected mock that carries the backend error envelope.
+
+describe('generateSpectrogram — error message extraction', () => {
+  beforeEach(() => {
+    mockFetchSTFT.mockResolvedValue(MOCK_FFT_RESULT);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('surfaces backend error envelope message on 422 response', async () => {
+    // Simulate an AxiosError whose response body uses the backend error envelope.
+    // axios.isAxiosError() checks `value?.isAxiosError === true`, so we set
+    // that property on a plain object — no mocking of axios needed.
+    const axiosLike = {
+      isAxiosError: true as const,
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'VALIDATION_ERROR',
+            message:
+              'The selected time window contains only 286 sample(s), but window_size (512) requires at least 512 samples.',
+          },
+        },
+      },
+      message: 'Request failed with status code 422',
+      name: 'AxiosError',
+    };
+
+    mockFetchSpectrogram.mockRejectedValueOnce(axiosLike);
+
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    // Brush + lock.
+    act(() => { result.current.handleBrushSelect(50.0, 100.0, 'ch1'); });
+    await waitFor(() => expect(result.current.state.fftResult).not.toBeNull());
+    act(() => { result.current.lockWindow(); });
+    act(() => { result.current.generateSpectrogram(); });
+
+    await waitFor(() => {
+      expect(result.current.state.spectrogramError).not.toBeNull();
+    });
+
+    expect(result.current.state.spectrogramError).toContain('window_size (512)');
+    expect(result.current.state.phase).toBe('locked');
+  });
+});

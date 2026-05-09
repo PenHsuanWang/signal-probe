@@ -1,5 +1,6 @@
 import { useReducer, useCallback, useRef, useMemo, useEffect } from 'react';
 import axios from 'axios';
+import type { AxiosError } from 'axios';
 import { fetchSTFT, fetchSpectrogram } from '../lib/api';
 import type {
   WindowFunction,
@@ -17,6 +18,34 @@ export function nextPowerOfTwo(n: number): number {
   let p = 1;
   while (p < n) p <<= 1;
   return Math.min(p, 131072);
+}
+
+/**
+ * Extract a human-readable error message from an unknown thrown value.
+ *
+ * Priority:
+ *   1. Backend custom envelope  → `{ error: { message: "..." } }`
+ *   2. FastAPI validation error → `{ detail: "..." | [...] }`
+ *   3. Axios HTTP status text   → `err.message`
+ *   4. Fallback string
+ */
+function extractApiError(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const data = (err as AxiosError<Record<string, unknown>>).response?.data;
+    if (data) {
+      const envelope = data['error'] as Record<string, unknown> | undefined;
+      if (typeof envelope?.message === 'string') return envelope.message;
+      if (typeof data['detail'] === 'string') return data['detail'];
+      if (Array.isArray(data['detail'])) {
+        return (data['detail'] as Array<{ msg?: string }>)
+          .map((d) => d.msg ?? '')
+          .filter(Boolean)
+          .join('; ');
+      }
+    }
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
 
 // ── State shape ───────────────────────────────────────────────────────────────
@@ -274,9 +303,7 @@ export function useSTFTExplorer(
         } catch (err: unknown) {
           if (axios.isCancel(err)) return;
           if (err instanceof Error && err.name === 'AbortError') return;
-          const msg =
-            err instanceof Error ? err.message : 'FFT computation failed';
-          dispatch({ type: 'FFT_ERROR', error: msg });
+          dispatch({ type: 'FFT_ERROR', error: extractApiError(err, 'FFT computation failed') });
         }
       }, 300);
     },
@@ -342,9 +369,10 @@ export function useSTFTExplorer(
       .catch((err: unknown) => {
         if (axios.isCancel(err)) return;
         if (err instanceof Error && err.name === 'AbortError') return;
-        const msg =
-          err instanceof Error ? err.message : 'Spectrogram generation failed';
-        dispatch({ type: 'SPECTROGRAM_ERROR', error: msg });
+        dispatch({
+          type: 'SPECTROGRAM_ERROR',
+          error: extractApiError(err, 'Spectrogram generation failed'),
+        });
       });
   }, [signalId, state.lockedWindowSize, state.overlapPct, state.window]);
 

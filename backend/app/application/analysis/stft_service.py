@@ -109,10 +109,20 @@ class STFTService:
         mask = (timestamps >= config.start_s) & (timestamps <= end_s)
         segment = amplitudes[mask]
 
+        if len(segment) == 0:
+            raise ValidationException(
+                f"No samples found in the time window "
+                f"[{config.start_s:.3f} s, {end_s:.3f} s]. "
+                "Check that the selected range overlaps with the signal."
+            )
+
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            get_executor(), compute_stft, segment, sampling_rate_hz, config
-        )
+        try:
+            result = await loop.run_in_executor(
+                get_executor(), compute_stft, segment, sampling_rate_hz, config
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
 
         return STFTResponse(
             signal_id=str(signal_id),
@@ -176,19 +186,38 @@ class STFTService:
         mask = (timestamps >= config.start_s) & (timestamps <= end_s)
         segment = amplitudes[mask]
 
+        if len(segment) == 0:
+            raise ValidationException(
+                f"No samples found in the time window "
+                f"[{config.start_s:.3f} s, {end_s:.3f} s]. "
+                "Check that the selected range overlaps with the signal."
+            )
+
+        if len(segment) < config.window_size:
+            raise ValidationException(
+                f"The selected time window contains only {len(segment)} sample(s), "
+                f"but window_size ({config.window_size}) requires at least "
+                f"{config.window_size} samples. "
+                f"Reduce window_size to ≤ {len(segment)} or select a longer "
+                "time window."
+            )
+
         # t_start is the actual first timestamp of the slice — used by the
         # engine to offset frame-centre times into absolute signal coordinates.
-        t_start = float(timestamps[mask][0]) if mask.any() else 0.0
+        t_start = float(timestamps[mask][0])
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            get_executor(),
-            compute_spectrogram,
-            segment,
-            sampling_rate_hz,
-            config,
-            t_start,
-        )
+        try:
+            result = await loop.run_in_executor(
+                get_executor(),
+                compute_spectrogram,
+                segment,
+                sampling_rate_hz,
+                config,
+                t_start,
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
 
         # Payload size guard (n_time × n_freq × 8 bytes per float64).
         n_time, n_freq = result.magnitude_db.shape

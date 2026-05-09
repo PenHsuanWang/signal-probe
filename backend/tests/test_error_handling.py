@@ -333,6 +333,93 @@ class TestSTFTServiceDomainExceptions:
         with pytest.raises(ValidationException, match="non-positive"):
             _infer_sampling_rate(np.array([1.0, 1.0, 1.0]))
 
+    @pytest.mark.anyio
+    async def test_get_spectrogram_raises_validation_on_empty_segment(
+        self, tmp_path, monkeypatch
+    ):
+        """Empty segment (gap in signal) raises ValidationException."""
+        import uuid
+
+        import numpy as np
+        import polars as pl
+
+        from app.application.analysis.stft_service import STFTService
+        from app.domain.analysis.schemas import SpectrogramConfig, WindowFunction
+
+        # Signal with a gap from t=3 s to t=9 s: timestamps 0,1,2,9,10.
+        timestamps = np.array([0.0, 1.0, 2.0, 9.0, 10.0])
+        amplitudes = np.ones(5)
+        df = pl.DataFrame({"timestamp_s": timestamps, "ch": amplitudes})
+        parquet_path = tmp_path / "sig.parquet"
+        df.write_parquet(parquet_path)
+
+        svc = STFTService.__new__(STFTService)
+
+        async def _load(signal_id, channel_name, owner_id):
+            return str(parquet_path), 1.0
+
+        monkeypatch.setattr(svc, "_load_channel_meta", _load)
+
+        # Request a window that falls inside the gap → zero matching samples.
+        config = SpectrogramConfig(
+            window_fn=WindowFunction.hann,
+            window_size=64,
+            hop_size=32,
+            start_s=3.5,
+            end_s=8.5,
+        )
+        with pytest.raises(ValidationException, match="No samples found"):
+            await svc.get_spectrogram(
+                signal_id=uuid.uuid4(),
+                channel_name="ch",
+                config=config,
+                owner_id=uuid.uuid4(),
+            )
+
+    @pytest.mark.anyio
+    async def test_get_spectrogram_raises_validation_when_segment_shorter_than_window(
+        self, tmp_path, monkeypatch
+    ):
+        """Segment shorter than window_size raises ValidationException (not 500)."""
+        import uuid
+
+        import numpy as np
+        import polars as pl
+
+        from app.application.analysis.stft_service import STFTService
+        from app.domain.analysis.schemas import SpectrogramConfig, WindowFunction
+
+        # Signal has 50 samples at 1 Hz → covers t=[0, 49] s.
+        n = 50
+        timestamps = np.arange(n, dtype=float)
+        amplitudes = np.random.default_rng(77).standard_normal(n)
+        df = pl.DataFrame({"timestamp_s": timestamps, "ch": amplitudes})
+        parquet_path = tmp_path / "sig.parquet"
+        df.write_parquet(parquet_path)
+
+        svc = STFTService.__new__(STFTService)
+
+        async def _load(signal_id, channel_name, owner_id):
+            return str(parquet_path), 1.0
+
+        monkeypatch.setattr(svc, "_load_channel_meta", _load)
+
+        # window_size=512 but segment only has ~20 samples in [0, 20 s].
+        config = SpectrogramConfig(
+            window_fn=WindowFunction.hann,
+            window_size=512,
+            hop_size=256,
+            start_s=0.0,
+            end_s=20.0,
+        )
+        with pytest.raises(ValidationException, match="window_size"):
+            await svc.get_spectrogram(
+                signal_id=uuid.uuid4(),
+                channel_name="ch",
+                config=config,
+                owner_id=uuid.uuid4(),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Infrastructure layer unit tests
