@@ -193,6 +193,7 @@ function GroupCard({ group, allSignalIds, onRefresh, onDelete }: GroupCardProps)
         {/* View Overlay → */}
         <button
           onClick={() => navigate(`/groups/${group.id}`)}
+          data-testid="view-overlay-btn"
           className="flex items-center gap-1 text-[10px] font-sans text-brand-400 hover:text-blue-300 transition-colors flex-shrink-0"
           title="View time-aligned overlay chart"
         >

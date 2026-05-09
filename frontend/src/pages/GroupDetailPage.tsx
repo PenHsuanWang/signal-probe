@@ -118,7 +118,7 @@ export default function GroupDetailPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto" data-testid="group-detail-page">
 
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -144,7 +144,11 @@ export default function GroupDetailPage() {
       </div>
 
       {/* Overlay chart */}
-      <div className="rounded-lg p-4" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+      <div
+        className="rounded-lg p-4"
+        data-testid="group-overlay-chart"
+        style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}
+      >
         <div className="mb-2 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xs font-semibold font-sans" style={{ color: 'var(--sp-text-secondary)' }}>

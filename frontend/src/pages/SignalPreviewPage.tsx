@@ -158,10 +158,14 @@ export default function SignalPreviewPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="signal-preview-page">
 
       {/* Macro Timeline */}
-      <div className="rounded-lg p-4" style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}>
+      <div
+        className="rounded-lg p-4"
+        data-testid="macro-chart"
+        style={{ background: 'var(--sp-surface-secondary)', border: '1px solid var(--sp-border)' }}
+      >
         <div className="mb-2 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xs font-semibold font-sans" style={{ color: 'var(--sp-text-secondary)' }}>Macro View</h2>
@@ -206,6 +210,7 @@ export default function SignalPreviewPage() {
             {macroData && (
               <Link
                 to={analysisHref}
+                data-testid="open-analysis-link"
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-sans font-semibold text-brand-400 hover:text-blue-300 border border-brand-500/30 hover:border-brand-500/60 transition-colors flex-shrink-0"
               >
                 <Waves size={11} aria-hidden="true" />

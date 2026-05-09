@@ -21,13 +21,13 @@ export function useRunChunks(
 
   useEffect(() => {
     if (!signalId || !xRange || !macroData) {
-      setRunChunks([]);
+      setRunChunks((prev) => (prev.length ? [] : prev));
       return;
     }
     const [x0, x1] = xRange;
     const visible = macroData.runs.filter((r) => r.start_x < x1 && r.end_x > x0);
     if (!visible.length) {
-      setRunChunks([]);
+      setRunChunks((prev) => (prev.length ? [] : prev));
       return;
     }
     let cancelled = false;

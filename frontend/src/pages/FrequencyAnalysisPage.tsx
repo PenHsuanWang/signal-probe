@@ -65,15 +65,17 @@ export default function FrequencyAnalysisPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <STFTExplorerPanel
+    <div className="space-y-6" data-testid="frequency-analysis-page">
+      <div data-testid="stft-explorer">
+        <STFTExplorerPanel
         signalId={signalId!}
         channelNames={selectedSignal?.channel_names ?? macroData.channels.map((c) => c.channel_name)}
         macroData={macroData}
         theme={theme}
         xRange={xRange}
         onXRangeChange={handleXRangeChange}
-      />
+        />
+      </div>
     </div>
   );
 }

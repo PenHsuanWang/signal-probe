@@ -14,7 +14,7 @@ export default function SignalDetailLayout() {
   const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
 
   return (
-    <div>
+    <div data-testid="signal-detail-layout">
       {/* Tab bar */}
       <div
         className="flex border-b mb-6"
@@ -26,6 +26,7 @@ export default function SignalDetailLayout() {
           to={`/signals/${id}${qs}`}
           end
           role="tab"
+          data-testid="tab-preview"
           className={({ isActive }) =>
             `flex items-center gap-2 px-4 py-2.5 text-xs font-sans font-semibold border-b-2 transition-colors -mb-px select-none ${
               isActive
@@ -42,6 +43,7 @@ export default function SignalDetailLayout() {
         <NavLink
           to={`/signals/${id}/analysis${qs}`}
           role="tab"
+          data-testid="tab-analysis"
           className={({ isActive }) =>
             `flex items-center gap-2 px-4 py-2.5 text-xs font-sans font-semibold border-b-2 transition-colors -mb-px select-none ${
               isActive
