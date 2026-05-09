@@ -75,7 +75,7 @@ test.describe('Performance Diagnosis', () => {
     await exploreButton.click();
 
     // Wait for the main layout to load
-    await page.waitForURL('**/?signalId=*');
+    await page.waitForURL('**/signals/*');
 
     // Assert that a chart canvas or SVG is rendered (Plotly creates these)
     await page.waitForSelector('.js-plotly-plot', { timeout: 15000 });
