@@ -111,7 +111,7 @@ async def _domain_validation_exception_handler(
         status_code=422,
         content={
             "error": {
-                "code": "UNPROCESSABLE_ENTITY",
+                "code": "VALIDATION_ERROR",
                 "message": exc.message,
                 "request_id": _request_id(request),
                 "timestamp": datetime.now(UTC).isoformat(),

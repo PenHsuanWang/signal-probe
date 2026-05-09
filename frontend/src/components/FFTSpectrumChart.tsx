@@ -22,12 +22,9 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
       {
         x: result.frequencies_hz,
         y: result.magnitudes,
-        type: 'scatter',
-        mode: 'lines',
+        type: 'bar',
         name: 'Magnitude',
-        line: { color: '#3b82f6', width: 1.5 },
-        fill: 'tozeroy',
-        fillcolor: 'rgba(59,130,246,0.08)',
+        marker: { color: '#3b82f6' },
         hovertemplate: '%{x:.3f} Hz<br>%{y:.4f}<extra></extra>',
       } as Plotly.Data,
     ];

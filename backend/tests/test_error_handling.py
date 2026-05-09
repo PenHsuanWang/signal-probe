@@ -163,7 +163,7 @@ class TestGlobalExceptionHandlers:
         resp = self._get_raising_response(ValidationException("bad column 'x'"))
         assert resp.status_code == 422
         body = _error_body(resp)
-        assert body["code"] == "UNPROCESSABLE_ENTITY"
+        assert body["code"] == "VALIDATION_ERROR"
         assert body["message"] == "bad column 'x'"
 
     def test_infrastructure_maps_to_500(self):

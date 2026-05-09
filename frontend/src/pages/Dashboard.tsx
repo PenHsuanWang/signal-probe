@@ -13,7 +13,7 @@ import { getMacroView, getRunChunks, listGroups } from '../lib/api';
 import { useSearchParams } from 'react-router-dom';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
-import { buildChartTheme, scientificColor } from '../lib/chartTheme';
+import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
 import type {
   Group,
   GroupMember,
@@ -188,7 +188,7 @@ export default function Dashboard() {
       const absX = xFraction * run.x[run.x.length - 1];
       try {
         P.relayout(div, { shapes: [{ type: 'line', x0: absX, x1: absX, y0: 0, y1: 1,
-          xref: 'x', yref: 'paper', line: { color: '#ef4444', width: 1, dash: 'dot' } }] });
+          xref: 'x', yref: 'paper', line: OOC_MARKER }] });
       } catch { /* unmounted */ }
     });
   }, [runChunks]);
