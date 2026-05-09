@@ -314,7 +314,7 @@ class TestNumericalAccuracy:
         assert int(np.argmax(result.magnitudes)) == nyquist_bin
 
     def test_spectrogram_time_axis_start(self):
-        """First time bin centre must equal window_size / (2 * sr)."""
+        """First time bin centre must equal window_size / (2 * sr) when t_start=0."""
         sr = 1000.0
         signal = np.random.default_rng(5).standard_normal(4096)
         config = _default_spec_config(window_size=256, hop_size=128)
@@ -339,3 +339,106 @@ class TestNumericalAccuracy:
         result = compute_stft(signal, sr, config)
         freq_resolution = sr / 1024  # ≈ 1.95 Hz/bin
         assert abs(result.dominant_frequency_hz - freq) <= freq_resolution + 1e-6
+
+
+# ── Windowed spectrogram (t_start offset) ─────────────────────────────────────
+
+
+class TestWindowedSpectrogram:
+    """Tests for the time-range slicing and t_start offset behaviour."""
+
+    def test_t_start_offset_applied(self):
+        """time_bins_s values must be offset by t_start."""
+        sr = 1000.0
+        signal = np.random.default_rng(11).standard_normal(2048)
+        config = _default_spec_config(window_size=256, hop_size=128)
+        t_start = 50.0
+
+        result_default = compute_spectrogram(signal, sr, config)
+        result_offset = compute_spectrogram(signal, sr, config, t_start=t_start)
+
+        # Every time bin in the offset result should be exactly t_start higher.
+        np.testing.assert_allclose(
+            result_offset.time_bins_s,
+            np.array(result_default.time_bins_s) + t_start,
+            rtol=1e-6,
+        )
+
+    def test_t_start_zero_matches_default(self):
+        """Explicit t_start=0.0 produces identical output to the default."""
+        sr = 500.0
+        signal = np.random.default_rng(22).standard_normal(1024)
+        config = _default_spec_config(window_size=128, hop_size=64)
+
+        result_default = compute_spectrogram(signal, sr, config)
+        result_explicit = compute_spectrogram(signal, sr, config, t_start=0.0)
+
+        np.testing.assert_array_equal(
+            result_default.time_bins_s, result_explicit.time_bins_s
+        )
+
+    def test_first_time_bin_absolute_coordinate(self):
+        """With t_start=100 s, the first frame centre = 100 + window_half / sr."""
+        sr = 1000.0
+        window_size = 256
+        signal = np.random.default_rng(33).standard_normal(2048)
+        config = _default_spec_config(window_size=window_size, hop_size=128)
+        t_start = 100.0
+
+        result = compute_spectrogram(signal, sr, config, t_start=t_start)
+
+        expected_first = t_start + (window_size / 2) / sr  # 100.128 s
+        assert result.time_bins_s[0] == pytest.approx(expected_first, rel=1e-6)
+
+    def test_magnitude_db_unchanged_by_t_start(self):
+        """Changing t_start must not affect the magnitude matrix values."""
+        sr = 1000.0
+        signal = _make_sine(50.0, duration_s=2.0, sampling_rate_hz=sr)
+        config = _default_spec_config(window_size=256, hop_size=128)
+
+        result_a = compute_spectrogram(signal, sr, config, t_start=0.0)
+        result_b = compute_spectrogram(signal, sr, config, t_start=999.0)
+
+        np.testing.assert_array_equal(result_a.magnitude_db, result_b.magnitude_db)
+        np.testing.assert_array_equal(
+            result_a.frequency_bins_hz, result_b.frequency_bins_hz
+        )
+
+    def test_spectrogram_config_start_s_ge_end_s_raises(self):
+        """SpectrogramConfig must reject start_s >= end_s."""
+        with pytest.raises(ValueError, match="start_s"):
+            SpectrogramConfig(window_size=256, hop_size=128, start_s=10.0, end_s=5.0)
+
+    def test_spectrogram_config_start_s_eq_end_s_raises(self):
+        """SpectrogramConfig must reject start_s == end_s."""
+        with pytest.raises(ValueError, match="start_s"):
+            SpectrogramConfig(window_size=256, hop_size=128, start_s=5.0, end_s=5.0)
+
+    def test_spectrogram_config_start_s_lt_end_s_valid(self):
+        """SpectrogramConfig with start_s < end_s must construct without error."""
+        cfg = SpectrogramConfig(window_size=256, hop_size=128, start_s=10.0, end_s=20.0)
+        assert cfg.start_s == 10.0
+        assert cfg.end_s == 20.0
+
+    def test_spectrogram_config_defaults(self):
+        """Default SpectrogramConfig has start_s=0.0 and end_s=None."""
+        cfg = SpectrogramConfig(window_size=256, hop_size=128)
+        assert cfg.start_s == 0.0
+        assert cfg.end_s is None
+
+    def test_t_start_with_downsampled_signal(self):
+        """t_start offset is correctly applied even when time axis is downsampled."""
+        sr = 1000.0
+        # window=256, hop=1 → >>2000 frames → downsampled
+        signal = np.random.default_rng(44).standard_normal(10_256)
+        config = _default_spec_config(window_size=256, hop_size=1)
+        t_start = 75.0
+
+        result = compute_spectrogram(signal, sr, config, t_start=t_start)
+
+        assert result.downsampled is True
+        # All time bins must be ≥ t_start (first frame centre)
+        assert result.time_bins_s[0] >= t_start
+        # And ≤ t_start + signal_duration
+        signal_duration = len(signal) / sr
+        assert result.time_bins_s[-1] <= t_start + signal_duration + 1.0

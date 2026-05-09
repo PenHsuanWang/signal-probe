@@ -16,14 +16,34 @@
  *   - SET_WINDOW_FN / SET_OVERLAP preserve unrelated state
  *   - SPECTROGRAM_LOADING / SPECTROGRAM_SUCCESS / SPECTROGRAM_ERROR lifecycle
  *
+ * generateSpectrogram
+ *   - forwards state.window.start_s and state.window.end_s to fetchSpectrogram
+ *   - sends no start_s/end_s when state.window is null (full-signal fallback)
+ *
  * Regression: fetchSTFT is called with an STFTParams *object* (not individual args)
  *   — the root cause of the production incident fixed in hotfix/fft-fetch-params.
  */
 
-import { describe, it, expect } from 'vitest';
-import { nextPowerOfTwo } from './useSTFTExplorer';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { nextPowerOfTwo, useSTFTExplorer } from './useSTFTExplorer';
 import type { STFTExplorerState } from './useSTFTExplorer';
-import type { STFTResponse } from '../types/signal';
+import type { STFTResponse, SpectrogramResponse } from '../types/signal';
+
+// ── Module mocks ──────────────────────────────────────────────────────────────
+
+vi.mock('../lib/api', () => ({
+  fetchSTFT: vi.fn(),
+  fetchSpectrogram: vi.fn(),
+}));
+
+import { fetchSTFT, fetchSpectrogram } from '../lib/api';
+
+const mockFetchSTFT = vi.mocked(fetchSTFT);
+const mockFetchSpectrogram = vi.mocked(fetchSpectrogram);
+
+// Suppress unused-variable lint for mockFetchSTFT (used indirectly via mock resets).
+void mockFetchSTFT;
 
 // ── Expose reducer for isolated testing ──────────────────────────────────────
 // The reducer is not exported from the module, but we can drive it through
@@ -205,5 +225,107 @@ describe('nextPowerOfTwo — brush-select derived window sizes', () => {
 
   it('sub-Hz sampling rate still returns a valid power of two', () => {
     expect(brushWindowSize(0, 10, 0.5)).toBe(8);
+  });
+});
+
+// ── generateSpectrogram — time-range forwarding ───────────────────────────────
+
+const MOCK_SPECTROGRAM: SpectrogramResponse = {
+  signal_id: 'sig-1',
+  channel_name: 'ch1',
+  time_bins_s: [50.128, 50.256, 50.384],
+  frequency_bins_hz: [0, 100, 200, 300, 400, 500],
+  magnitude_db: [
+    [-10, -20, -5, -30, -40, -50],
+    [-12, -18, -4, -28, -38, -48],
+    [-11, -19, -6, -29, -39, -49],
+  ],
+  sampling_rate_hz: 1000,
+  downsampled: false,
+};
+
+const MOCK_MACRO_X = Array.from({ length: 1001 }, (_, i) => i / 1000);
+
+describe('generateSpectrogram — time-range forwarding', () => {
+  beforeEach(() => {
+    mockFetchSTFT.mockResolvedValue(MOCK_FFT_RESULT);
+    mockFetchSpectrogram.mockResolvedValue(MOCK_SPECTROGRAM);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('passes state.window.start_s and end_s to fetchSpectrogram', async () => {
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    // 1. Brush-select a window (triggers handleBrushSelect).
+    const brushStart = 50.0;
+    const brushEnd = 100.0;
+    act(() => {
+      result.current.handleBrushSelect(brushStart, brushEnd, 'ch1');
+    });
+
+    // Wait for the debounced FFT call to complete.
+    await waitFor(() => {
+      expect(result.current.state.fftResult).not.toBeNull();
+    });
+
+    // 2. Lock the window.
+    act(() => {
+      result.current.lockWindow();
+    });
+
+    // 3. Generate spectrogram.
+    act(() => {
+      result.current.generateSpectrogram();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.spectrogramResult).not.toBeNull();
+    });
+
+    // Assert fetchSpectrogram was called with the correct time bounds.
+    expect(mockFetchSpectrogram).toHaveBeenCalledOnce();
+    const [, params] = mockFetchSpectrogram.mock.calls[0];
+    expect(params.start_s).toBe(brushStart);
+    expect(params.end_s).toBe(brushEnd);
+    expect(params.channel_name).toBe('ch1');
+  });
+
+  it('does not call fetchSpectrogram when state.window is null (no-op guard)', async () => {
+    // A fresh hook with no brush selection has window=null and lockedWindowSize=null.
+    // generateSpectrogram() must be a no-op in this state.
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-2', MOCK_MACRO_X, 'ch2'),
+    );
+
+    act(() => { result.current.generateSpectrogram(); });
+
+    // No async work should occur; fetchSpectrogram must not be called at all.
+    expect(mockFetchSpectrogram).not.toHaveBeenCalled();
+    expect(result.current.state.phase).toBe('idle');
+  });
+
+  it('spectrogram result reflects the returned time_bins_s unchanged', async () => {
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    act(() => { result.current.handleBrushSelect(50.0, 100.0, 'ch1'); });
+    await waitFor(() => expect(result.current.state.fftResult).not.toBeNull());
+    act(() => { result.current.lockWindow(); });
+    act(() => { result.current.generateSpectrogram(); });
+
+    await waitFor(() => {
+      expect(result.current.state.spectrogramResult).not.toBeNull();
+    });
+
+    // The hook stores the response verbatim — time_bins_s come from the backend.
+    expect(result.current.state.spectrogramResult!.time_bins_s).toEqual(
+      MOCK_SPECTROGRAM.time_bins_s,
+    );
   });
 });

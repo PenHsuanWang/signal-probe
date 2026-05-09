@@ -157,6 +157,8 @@ export interface SpectrogramParams {
   window_fn?: WindowFunction;
   window_size?: number;
   hop_size?: number;
+  start_s?: number;
+  end_s?: number;
 }
 
 export async function fetchSTFT(

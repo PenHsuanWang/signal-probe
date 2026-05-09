@@ -53,3 +53,9 @@ backend/storage/
 
 # ── Local PR drafts ───────────────────────────────────────────────────────────
 PR.md
+
+# ── Playwright ────────────────────────────────────────────────────────────────
+frontend/playwright-report/
+frontend/test-results/
+frontend/playwright.config.ts
+backend/ERROR_HANDLING_SUGGESTIONS.md

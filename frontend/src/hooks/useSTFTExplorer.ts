@@ -331,6 +331,8 @@ export function useSTFTExplorer(
         window_fn: wfn,
         window_size: ws,
         hop_size: hs,
+        start_s: state.window?.start_s,
+        end_s: state.window?.end_s,
       },
       ac.signal,
     )
@@ -344,7 +346,7 @@ export function useSTFTExplorer(
           err instanceof Error ? err.message : 'Spectrogram generation failed';
         dispatch({ type: 'SPECTROGRAM_ERROR', error: msg });
       });
-  }, [signalId, state.lockedWindowSize, state.overlapPct]);
+  }, [signalId, state.lockedWindowSize, state.overlapPct, state.window]);
 
   return {
     state,

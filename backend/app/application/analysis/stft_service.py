@@ -131,12 +131,18 @@ class STFTService:
         config: SpectrogramConfig,
         owner_id: uuid.UUID,
     ) -> SpectrogramResponse:
-        """Compute the full-signal sliding-window spectrogram.
+        """Compute a windowed sliding-window STFT spectrogram.
+
+        When ``config.start_s`` / ``config.end_s`` are provided the signal is
+        sliced to that range before analysis.  The returned ``time_bins_s``
+        values are in the same elapsed-seconds coordinate as the Parquet
+        ``timestamp_s`` column (i.e. absolute signal time, not relative to the
+        slice start).
 
         Args:
             signal_id: UUID of the signal to analyse.
             channel_name: Name of the channel column in the Parquet file.
-            config: Spectrogram parameters (window function, size, hop size).
+            config: Spectrogram parameters including optional time window.
             owner_id: ID of the authenticated user (ownership check).
 
         Returns:
@@ -145,17 +151,43 @@ class STFTService:
         Raises:
             NotFoundException: Signal or channel not found.
             ConflictException: Signal is not in COMPLETED state.
+            ValidationException: Time window is invalid or too short.
             ValueError: Response payload would exceed STFT_MAX_RESPONSE_MB.
         """
         parquet_path, sampling_rate_hz = await self._load_channel_meta(
             signal_id, channel_name, owner_id
         )
 
-        _, amplitudes = _read_two_columns(parquet_path, "timestamp_s", channel_name)
+        timestamps, amplitudes = _read_two_columns(
+            parquet_path, "timestamp_s", channel_name
+        )
+
+        # Resolve effective end time (clamp to signal boundary).
+        t_max = float(timestamps[-1])
+        end_s = min(config.end_s, t_max) if config.end_s is not None else t_max
+
+        if config.start_s >= end_s:
+            raise ValidationException(
+                f"start_s ({config.start_s}) is at or beyond the signal end "
+                f"({t_max:.3f} s).  Choose a smaller start_s."
+            )
+
+        # Slice to the requested time window.
+        mask = (timestamps >= config.start_s) & (timestamps <= end_s)
+        segment = amplitudes[mask]
+
+        # t_start is the actual first timestamp of the slice — used by the
+        # engine to offset frame-centre times into absolute signal coordinates.
+        t_start = float(timestamps[mask][0]) if mask.any() else 0.0
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
-            get_executor(), compute_spectrogram, amplitudes, sampling_rate_hz, config
+            get_executor(),
+            compute_spectrogram,
+            segment,
+            sampling_rate_hz,
+            config,
+            t_start,
         )
 
         # Payload size guard (n_time × n_freq × 8 bytes per float64).
