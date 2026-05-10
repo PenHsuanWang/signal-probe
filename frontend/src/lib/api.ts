@@ -1,9 +1,13 @@
 import axios from 'axios';
 import type {
+  BulkImportResult,
   Group,
   GroupCreateRequest,
   GroupMemberUpsert,
   GroupUpdateRequest,
+  LotEvent,
+  LotEventCreateRequest,
+  LotSliceResponse,
   MacroViewResponse,
   ProcessSignalRequest,
   RawColumnsResponse,
@@ -182,5 +186,46 @@ export async function fetchSpectrogram(
     `/signals/${signalId}/analysis/spectrogram`,
     { params, signal },
   );
+  return res.data;
+}
+
+// ── Lot Event API helpers ─────────────────────────────────────────────────────
+
+export async function listLotEvents(signalId: string): Promise<LotEvent[]> {
+  const res = await api.get<LotEvent[]>(`/signals/${signalId}/lot-events`);
+  return res.data;
+}
+
+export async function createLotEvent(
+  signalId: string,
+  data: LotEventCreateRequest,
+): Promise<LotEvent> {
+  const res = await api.post<LotEvent>(`/signals/${signalId}/lot-events`, data);
+  return res.data;
+}
+
+export async function deleteLotEvent(signalId: string, eventId: string): Promise<void> {
+  await api.delete(`/signals/${signalId}/lot-events/${eventId}`);
+}
+
+export async function uploadLotEventsCsv(
+  signalId: string,
+  file: File,
+): Promise<BulkImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await api.post<BulkImportResult>(
+    `/signals/${signalId}/lot-events/upload-csv`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return res.data;
+}
+
+export async function getLotSlice(
+  signalId: string,
+  lotId: string,
+): Promise<LotSliceResponse> {
+  const res = await api.get<LotSliceResponse>(`/signals/${signalId}/lot-slice/${lotId}`);
   return res.data;
 }
