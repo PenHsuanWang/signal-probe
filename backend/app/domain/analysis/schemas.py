@@ -64,7 +64,7 @@ class STFTWindowConfig(BaseModel):
 
 
 class SpectrogramConfig(BaseModel):
-    """Parameters for computing a full-signal spectrogram."""
+    """Parameters for computing a windowed or full-signal spectrogram."""
 
     window_fn: WindowFunction = Field(
         WindowFunction.hann, description="Window function applied to each frame"
@@ -80,6 +80,17 @@ class SpectrogramConfig(BaseModel):
         ge=1,
         description="Number of samples to advance between successive frames",
     )
+    start_s: float = Field(
+        0.0,
+        ge=0,
+        description=(
+            "Segment start time in seconds from t=0; defaults to beginning of signal"
+        ),
+    )
+    end_s: float | None = Field(
+        None,
+        description="Segment end time in seconds from t=0; None means end of signal",
+    )
 
     @model_validator(mode="after")
     def _validate_hop(self) -> SpectrogramConfig:
@@ -88,6 +99,11 @@ class SpectrogramConfig(BaseModel):
         if self.hop_size > self.window_size:
             raise ValueError(
                 f"hop_size ({self.hop_size}) must be ≤ window_size ({self.window_size})"
+            )
+        if self.end_s is not None and self.start_s >= self.end_s:
+            raise ValueError(
+                f"start_s ({self.start_s}) must be strictly less than "
+                f"end_s ({self.end_s})"
             )
         return self
 
@@ -116,4 +132,13 @@ class SpectrogramResponse(BaseModel):
     downsampled: bool = Field(
         False,
         description="True when the time axis was automatically reduced to 2,000 bins",
+    )
+    t0_epoch_s: float | None = Field(
+        None,
+        description=(
+            "Unix epoch seconds of the signal's first sample (t=0). "
+            "Present when the signal has an absolute datetime time column. "
+            "Reconstruct absolute datetime for time_bin i as: "
+            "datetime.utcfromtimestamp(t0_epoch_s + time_bins_s[i])"
+        ),
     )

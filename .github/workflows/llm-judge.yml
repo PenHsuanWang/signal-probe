@@ -1,0 +1,72 @@
+name: LLM Judge
+
+on:
+  pull_request:
+    branches: [dev, master]
+    types: [opened, synchronize, reopened]
+
+# Only one judge run per PR at a time
+concurrency:
+  group: llm-judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  llm-judge:
+    name: LLM Code Review Judge
+    runs-on: ubuntu-latest
+    # Skip if no LLM API key is configured (forks, dependabot, etc.)
+    if: ${{ secrets.OPENAI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' }}
+
+    permissions:
+      pull-requests: write   # needed to post the scorecard comment
+      contents: read
+
+    steps:
+      - name: Checkout (full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install judge dependencies
+        run: pip install -r eval/requirements.txt
+
+      - name: Run LLM Judge
+        id: judge
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Multi-line PR body needs careful quoting — write to a file instead
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set whichever key you have; core.py routes by model name prefix
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m eval.runner 2>&1 | tee judge_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload scorecard artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: llm-judge-scorecard-pr${{ github.event.pull_request.number }}
+          path: .judge-scores/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Propagate the real exit code (tee masks it above)
+      - name: Enforce gate
+        if: always()
+        run: |
+          code="${{ steps.judge.outputs.exit_code }}"
+          if [ "$code" = "1" ]; then
+            echo "🚫 LLM Judge FAILED — see scorecard above." >&2
+            exit 1
+          fi

@@ -500,6 +500,14 @@ CREATE TABLE run_segments (
 - **Three-level concurrency:** (1) Algorithm pre-selects ≤ 2,000 frames before any FFT to minimise total work. (2) `scipy.fft.rfft(workers=-1)` uses pocketfft threads inside each worker. (3) Multiple concurrent analysis requests each run in a separate worker process.
 - **Risk:** Process startup overhead on the first request is amortised by pre-forking. Large spectrograms that exceed `STFT_MAX_RESPONSE_MB` return HTTP 413 instead of silently consuming all server memory.
 
+### ADR-011 — LLM-as-a-Judge Code Quality Gate (Adapter Pattern for CI Platforms)
+- **Decision:** The AI agent eval harness (`eval/`) uses an `ICIAdapter` interface (Strategy Pattern, mirroring ADR-001's `IStorageAdapter`) to decouple judge logic from any specific CI platform. Four concrete adapters are provided: `GitHubAdapter`, `BitbucketAdapter`, `GitLabAdapter`, and `CLIAdapter`.
+- **Rationale:** The judge core (`eval/judge/core.py`) — diff parsing, LLM invocation, rubric evaluation, scorecard generation — is identical across all CI providers. Only the context source (how to get the diff and PR description) and the comment sink (how to post feedback) differ. The adapter pattern isolates those two concerns into a single thin class per platform, enabling the system to migrate from GitHub Actions to Bitbucket Pipelines, GitLab CI, or a bare shell script by setting environment variables — with zero changes to judge logic.
+- **Platform detection:** `eval/runner.py` auto-selects the adapter by checking `GITHUB_ACTIONS`, `BITBUCKET_WORKSPACE`, and `GITLAB_CI` environment variables in that order; falls back to `CLIAdapter` when none are set.
+- **LLM routing:** Model name prefix determines provider — `claude-*` → Anthropic client; anything else → OpenAI client. Both are called with `temperature=0` for deterministic scoring.
+- **Weighted scoring:** `overall_score = instruction_adherence × 0.35 + architectural_alignment × 0.40 + code_quality × 0.25`. Architecture weighted highest because ADR compliance is the primary quality gate.
+- **Soft gate:** `soft_gate: true` in `eval/.judge.yml` logs the verdict without failing CI — recommended during initial calibration.
+
 ---
 
 ## 9. Known Issues & Implementation Status
@@ -726,7 +734,10 @@ git push origin vX.Y.Z
 | Workflow | Trigger | Jobs |
 |----------|---------|------|
 | `ci.yml` | Push / PR to `dev` or `master` | `backend-checks` (ruff) + `frontend-checks` (tsc + eslint + build) |
+| `llm-judge.yml` | PR opened / updated against `dev` or `master` | LLM code-review judge — posts scorecard comment, uploads artifact, enforces quality gate |
 | `release.yml` | Push tag `vX.Y.Z` | Verify CI → build frontend dist → create GitHub Release |
+
+> **LLM Judge prerequisites:** add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) to *Settings → Secrets → Actions*. The workflow is skipped automatically for forks and Dependabot PRs where secrets are not available. Set `soft_gate: true` in `eval/.judge.yml` to collect scores without blocking merges during initial calibration.
 
 ### Common Pitfalls
 
@@ -736,3 +747,211 @@ git push origin vX.Y.Z
 | `uvx: command not found` | Install uv globally (`curl -LsSf https://astral.sh/uv/install.sh | sh`) |
 | Tag pushed before `master` merge | Release will point to a non-master state — push tag only after merge |
 | `git push origin master` rejected | Branch is protected — open a PR from `dev` |
+| LLM Judge skipped in CI | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` secret not set — add it under *Settings → Secrets → Actions* |
+| LLM Judge blocks valid PR | Set `soft_gate: true` in `eval/.judge.yml` to downgrade hard failure to a warning |
+
+---
+
+## 13. AI Agent Eval Harness
+
+Signal Probe ships a four-pillar eval harness designed to maintain code quality as AI agents (GitHub Copilot, Claude, etc.) contribute to the codebase. The harness is documented in full in [`ai_agent_eval_harness.md`](./ai_agent_eval_harness.md). This section covers the implemented **Pillar B: LLM-as-a-Judge**.
+
+### 13.1 Directory Layout
+
+```
+eval/
+├── __init__.py
+├── runner.py               # platform auto-detection entrypoint (python -m eval.runner)
+├── requirements.txt        # judge dependencies (openai, anthropic, pyyaml, pydantic, requests)
+├── .judge.yml              # runtime config: model, thresholds, behavior flags
+├── judge/
+│   ├── __init__.py
+│   ├── core.py             # platform-agnostic orchestration (load → diff → LLM → score → post)
+│   ├── scorecard.py        # Pydantic v2 JudgeScorecard schema + weighted overall_score
+│   ├── rubric.py           # project-specific rules derived from all 10 ADRs
+│   ├── prompts.py          # SYSTEM_PROMPT + EVALUATION_TEMPLATE (JSON output spec)
+│   └── diff_parser.py      # git unified diff parser → ChangeSummary + FileArea classification
+└── adapters/
+    ├── __init__.py
+    ├── base.py             # ICIAdapter ABC + PRContext dataclass
+    ├── github.py           # GitHub Actions adapter
+    ├── bitbucket.py        # Bitbucket Pipelines adapter (API 2.0)
+    ├── gitlab.py           # GitLab CI adapter (MR notes API)
+    └── cli.py              # Standalone / local / Jenkins adapter
+```
+
+Scorecards are saved to `.judge-scores/scorecard_{timestamp}_pr{id}.json` for regression tracking.
+
+### 13.2 Architecture — ICIAdapter
+
+The judge core is entirely platform-agnostic. Platform concerns are isolated behind the `ICIAdapter` interface (mirrors ADR-001's `IStorageAdapter`):
+
+```python
+class ICIAdapter(ABC):
+    def load_context(self) -> PRContext: ...   # fetch diff + description
+    def post_comment(self, pr_id, body): ...   # post scorecard comment
+    def set_exit_code(self, passed: bool): ... # signal pass/fail to runner
+```
+
+`eval/runner.py` auto-selects the adapter by env var presence:
+
+| Env var present | Adapter selected |
+|----------------|-----------------|
+| `GITHUB_ACTIONS=true` | `GitHubAdapter` |
+| `BITBUCKET_WORKSPACE` | `BitbucketAdapter` |
+| `GITLAB_CI=true` | `GitLabAdapter` |
+| (none) | `CLIAdapter` (reads from argparse) |
+
+### 13.3 Scoring Model
+
+The LLM judge evaluates every PR diff against three dimensions:
+
+| Dimension | Weight | What it checks |
+|-----------|--------|----------------|
+| `instruction_adherence` | 35 % | Did the change do what the PR description asked? No scope creep? |
+| `architectural_alignment` | 40 % | Do all 10 ADRs hold? Clean Architecture layers respected? |
+| `code_quality` | 25 % | Type safety, error handling, no magic constants, tests updated? |
+| `vibe_check` | Pass/Fail | UI consistency: dark theme tokens, scattergl, JetBrains Mono, no consumer-app aesthetics |
+
+`overall_score = instruction × 0.35 + architecture × 0.40 + quality × 0.25`
+
+`vibe_check` is qualitative only — it never contributes to `overall_score` but can block CI
+independently when `vibe_check_blocks: true` in `eval/.judge.yml`.
+
+Each numeric dimension is scored 0–10 by the LLM; configurable pass thresholds are in `eval/.judge.yml`.
+
+**Verdict values:**
+
+| Verdict | Meaning |
+|---------|---------|
+| `APPROVED` | All dimension scores meet thresholds and vibe_check passed (if blocking) |
+| `NEEDS_WORK` | One or more dimension scores fall below threshold — CI fails unless `soft_gate: true` |
+| `BLOCKED` | Severe violation (e.g., secret committed, direct DB write from domain layer) — always fails CI regardless of `soft_gate` when `fail_on_blocked: true` |
+
+### 13.4 Configuration (`eval/.judge.yml`)
+
+```yaml
+judge:
+  model: "gpt-4o"        # or "claude-opus-4-5"; prefix "claude-" → Anthropic client
+  temperature: 0.0       # must be 0 for deterministic, reproducible scoring
+  max_diff_chars: 40000  # truncation limit to fit LLM context window
+
+thresholds:
+  instruction_adherence: 6   # minimum score to pass (0–10)
+  architectural_alignment: 6
+  code_quality: 5
+  vibe_check_blocks: false   # vibe failure is warning-only by default
+  fail_on_blocked: true
+
+behavior:
+  post_comment: true
+  save_scorecard: true
+  scorecard_dir: ".judge-scores"
+  soft_gate: false           # set true during calibration: logs verdict, never fails CI
+```
+
+### 13.5 Environment Variables
+
+| Variable | Required by | Description |
+|----------|-------------|-------------|
+| `OPENAI_API_KEY` | OpenAI models (`gpt-4o`, `gpt-4o-mini`) | LLM API key — set as CI secret |
+| `ANTHROPIC_API_KEY` | Anthropic models (`claude-*`) | LLM API key — set as CI secret |
+| `GITHUB_TOKEN` | `GitHubAdapter` | Auto-injected by GitHub Actions; needs `pull-requests: write` |
+| `BITBUCKET_ACCESS_TOKEN` | `BitbucketAdapter` | Repo variable; needs `pullrequest:write` + `repository:read` scopes |
+| `GITLAB_TOKEN` | `GitLabAdapter` | CI/CD variable; needs `api` scope |
+| `GITHUB_ACTIONS` | auto-detection | Set to `true` by GitHub Actions runner |
+| `BITBUCKET_WORKSPACE` | auto-detection | Set automatically by Bitbucket Pipelines |
+| `GITLAB_CI` | auto-detection | Set to `true` by GitLab CI runner |
+
+> Only one LLM key is needed. GitHub/Bitbucket/GitLab tokens are injected automatically by their
+> respective CI runners — you only need to configure them manually for the CLI adapter.
+
+### 13.6 Local Usage
+
+```bash
+# Install dependencies (Python 3.12+, from repo root)
+pip install -r eval/requirements.txt
+
+# Run against the last commit (uses CLIAdapter)
+OPENAI_API_KEY=sk-... python -m eval.runner \
+  --description "Add STFT window lock UI" \
+  --base-ref HEAD~1 \
+  --head-ref HEAD
+
+# Run against a pre-captured diff file
+python -m eval.runner \
+  --description "Fix lint errors" \
+  --diff-file changes.diff
+
+# Dry-run (soft gate, no CI failure even on low scores)
+# Set soft_gate: true in eval/.judge.yml, then run as above
+```
+
+**Scorecard output** — example `.judge-scores/scorecard_20240427T143000Z_prlocal.json`:
+
+```json
+{
+  "instruction_adherence": { "score": 8, "justification": "...", "violations": [] },
+  "architectural_alignment": { "score": 9, "justification": "...", "violations": [] },
+  "code_quality": { "score": 7, "justification": "...", "violations": [] },
+  "vibe_check": { "passed": true, "justification": "...", "issues": [] },
+  "overall_verdict": "APPROVED",
+  "summary": "Change correctly implements the feature described...",
+  "judge_model": "gpt-4o",
+  "prompt_version": "1.0",
+  "evaluated_at": "2024-04-27T14:30:00+00:00",
+  "pr_id": "local",
+  "head_ref": "HEAD",
+  "base_ref": "HEAD~1"
+}
+```
+
+> `overall_score` is a computed property: `8×0.35 + 9×0.40 + 7×0.25 = 8.35`
+
+**Add `.judge-scores/` to `.gitignore`** — scorecard JSON files are for local regression
+tracking and should not be committed to source control:
+
+```gitignore
+# LLM Judge scorecard history (local regression tracking)
+.judge-scores/
+```
+
+### 13.7 CI Integration
+
+**GitHub Actions** (`llm-judge.yml`) — runs automatically on every PR to `dev`/`master`:
+- Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in repository secrets.
+- Posts a formatted scorecard comment on the PR.
+- Uploads `scorecard.json` as a workflow artifact (90-day retention) for regression tracking.
+- Skipped automatically for forks and Dependabot PRs (no access to secrets).
+
+**Bitbucket Pipelines** — add to `bitbucket-pipelines.yml` under `pull-requests`:
+```yaml
+- step:
+    name: LLM Judge
+    script:
+      - pip install -r eval/requirements.txt
+      - python -m eval.runner
+```
+Requires `BITBUCKET_ACCESS_TOKEN` (pullrequest:write + repository:read scope) as a repository variable.
+
+**GitLab CI** — add to `.gitlab-ci.yml` with `rules: - if: $CI_PIPELINE_SOURCE == "merge_request_event"`:
+```yaml
+llm-judge:
+  image: python:3.12-slim
+  stage: review
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - pip install -r eval/requirements.txt
+    - python -m eval.runner
+```
+Requires `GITLAB_TOKEN` CI/CD variable (api scope).
+
+### 13.8 Eval Harness Roadmap
+
+| Pillar | Description | Status |
+|--------|-------------|--------|
+| A — Deterministic CI | ruff, eslint, tsc, build | ✅ `ci.yml` |
+| B — LLM-as-a-Judge | Diff → LLM → scorecard → PR comment | ✅ `llm-judge.yml` + `eval/` |
+| C — Trajectory Analysis | Multi-turn agent step audit | 🔲 Planned |
+| D — E2E / Visual Regression | Playwright + screenshot diff | 🔲 Planned |

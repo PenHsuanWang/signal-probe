@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  Activity, Database, Layers, Settings,
+  Database, Layers, Settings,
   UploadCloud, RefreshCw,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
@@ -9,9 +9,8 @@ import { useTheme } from '../context/ThemeContext';
 import type { SignalMetadata } from '../types/signal';
 
 const NAV_ITEMS = [
-  { to: '/',         label: 'Explorer', icon: Activity,  end: true  },
-  { to: '/signals',  label: 'Signals',  icon: Database,  end: false },
-  { to: '/groups',   label: 'Groups',   icon: Layers,    end: false },
+  { to: '/signals', label: 'Signals',  icon: Database,  end: false },
+  { to: '/groups',  label: 'Groups',   icon: Layers,    end: false },
   { to: '/settings', label: 'Settings', icon: Settings,  end: false },
 ];
 
@@ -86,7 +85,7 @@ export default function Sidebar() {
               {signals.slice(0, 8).map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate(`/signals/${s.id}`)}
                   title={s.original_filename}
                   className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs font-mono hover:bg-zinc-800/10 transition-colors text-left"
                   style={{ color: 'var(--sp-text-muted)' }}

@@ -20,6 +20,17 @@ export const SCIENTIFIC_PALETTE: string[] = [
 export const scientificColor = (i: number): string =>
   SCIENTIFIC_PALETTE[i % SCIENTIFIC_PALETTE.length];
 
+/**
+ * Deep-red marker style for OOC (Out-of-Control) anomaly highlights.
+ * Reference this constant for every OOC shape / marker in the application
+ * instead of inlining the color string.
+ */
+export const OOC_MARKER = {
+  color: '#ef4444',
+  width: 1,
+  dash: 'dot' as const,
+};
+
 // ── Shared axis config ────────────────────────────────────────────────────────
 
 const LIGHT_AXIS = {
