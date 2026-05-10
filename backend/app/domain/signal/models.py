@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Double, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.domain.lot_event.models import LotEvent
 
 
 class SignalMetadata(Base):
@@ -29,8 +35,11 @@ class SignalMetadata(Base):
     time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     signal_columns: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list
 
-    runs: Mapped[list["RunSegment"]] = relationship(
+    runs: Mapped[list[RunSegment]] = relationship(
         "RunSegment", back_populates="signal", cascade="all, delete-orphan"
+    )
+    lot_events: Mapped[list[LotEvent]] = relationship(
+        "LotEvent", back_populates="signal", cascade="all, delete-orphan"
     )
 
 
@@ -49,6 +58,6 @@ class RunSegment(Base):
     value_mean: Mapped[float | None] = mapped_column(Double, nullable=True)
     value_variance: Mapped[float | None] = mapped_column(Double, nullable=True)
 
-    signal: Mapped["SignalMetadata"] = relationship(
+    signal: Mapped[SignalMetadata] = relationship(
         "SignalMetadata", back_populates="runs"
     )
