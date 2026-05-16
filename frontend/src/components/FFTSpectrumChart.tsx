@@ -83,7 +83,7 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
     };
   }, [result, theme, axisColor, gridColor]);
 
-  if (loading) {
+  if (loading && !result) {
     return (
       <div className="flex items-center justify-center h-full min-h-[180px] text-xs font-sans"
            style={{ color: 'var(--sp-text-tertiary)' }}>
@@ -104,7 +104,7 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
     return (
       <div className="flex items-center justify-center h-full min-h-[180px] text-xs font-sans"
            style={{ color: 'var(--sp-text-tertiary)' }}>
-        Drag a selection on the chart above to compute FFT
+        Select a time window above to begin exploration
       </div>
     );
   }
@@ -133,32 +133,44 @@ export default function FFTSpectrumChart({ result, loading, error, theme }: Prop
         : `${durationS.toFixed(1)} s`;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-1 pb-1 text-[10px] font-mono"
-           style={{ color: 'var(--sp-text-tertiary)' }}>
-        <span>
-          <span style={{ color: 'var(--sp-text-secondary)' }}>{result.window_config.window_size}</span> samples
-          @ <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(result.sampling_rate_hz)}</span>
-        </span>
-        <span>
-          Duration: <span style={{ color: 'var(--sp-text-secondary)' }}>
-            {durationStr}
+    <div className="relative flex flex-col h-full">
+      {/* Chart — dimmed at 40% opacity when a new FFT request is loading */}
+      <div className={`flex flex-col h-full transition-opacity ${loading ? 'opacity-40' : 'opacity-100'}`}>
+        <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-1 pb-1 text-[10px] font-mono"
+             style={{ color: 'var(--sp-text-tertiary)' }}>
+          <span>
+            <span style={{ color: 'var(--sp-text-secondary)' }}>{result.window_config.window_size}</span> samples
+            @ <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(result.sampling_rate_hz)}</span>
           </span>
-        </span>
-        <span>
-          Freq res: <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(freqRes)}</span>
-        </span>
-        <span className="text-amber-400">
-          Dominant: {result.dominant_frequency_hz != null ? fmtHz(result.dominant_frequency_hz) : '—'}
-        </span>
+          <span>
+            Duration: <span style={{ color: 'var(--sp-text-secondary)' }}>
+              {durationStr}
+            </span>
+          </span>
+          <span>
+            Freq res: <span style={{ color: 'var(--sp-text-secondary)' }}>{fmtHz(freqRes)}</span>
+          </span>
+          <span className="text-amber-400">
+            Dominant: {result.dominant_frequency_hz != null ? fmtHz(result.dominant_frequency_hz) : '—'}
+          </span>
+        </div>
+        <Plot
+          data={traces}
+          layout={layout}
+          useResizeHandler
+          style={{ width: '100%', flex: 1, minHeight: '160px' }}
+          config={{ displayModeBar: false }}
+        />
       </div>
-      <Plot
-        data={traces}
-        layout={layout}
-        useResizeHandler
-        style={{ width: '100%', flex: 1, minHeight: '160px' }}
-        config={{ displayModeBar: false }}
-      />
+
+      {/* Loading overlay — spinner centered over the dimmed prior chart */}
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="animate-pulse text-xs font-sans" style={{ color: 'var(--sp-text-tertiary)' }}>
+            Computing FFT…
+          </span>
+        </div>
+      )}
     </div>
   );
 }

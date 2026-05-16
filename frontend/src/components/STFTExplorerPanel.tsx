@@ -271,7 +271,7 @@ export default function STFTExplorerPanel({
 
       {!collapsed && (
         <div className="p-4 space-y-4">
-          {/* Channel selector */}
+          {/* Channel selector + Reset Zoom */}
           <div className="flex items-center gap-3">
             <label className="text-[10px] font-sans font-semibold uppercase tracking-wide flex-shrink-0"
                    style={{ color: 'var(--sp-text-tertiary)' }}>
@@ -292,6 +292,23 @@ export default function STFTExplorerPanel({
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
+
+            {/* Reset Zoom — resets both the exploration chart and the spectrogram */}
+            {xRange !== null && (
+              <button
+                onClick={() => onXRangeChange(null)}
+                className="ml-auto text-[10px] font-sans px-2 py-1 rounded transition-colors"
+                style={{
+                  background: 'var(--sp-surface-elevated)',
+                  border: '1px solid var(--sp-border)',
+                  color: 'var(--sp-text-secondary)',
+                }}
+                aria-label="Reset zoom to full signal extent"
+                title="Reset zoom to full signal extent"
+              >
+                Reset Zoom
+              </button>
+            )}
           </div>
 
           {/* Exploration chart */}
@@ -316,11 +333,24 @@ export default function STFTExplorerPanel({
               onRelayout={handleExplorationRelayout}
             />
 
-            {/* Info bar */}
-            {infoBarText && (
-              <p className="text-[10px] font-mono mt-1" style={{ color: 'var(--sp-text-tertiary)' }}>
-                {infoBarText}
-              </p>
+            {/* Info bar + Clear selection */}
+            {state.window && (
+              <div className="flex items-center justify-between mt-1 min-h-[1rem]">
+                {infoBarText && (
+                  <p className="text-[10px] font-mono" style={{ color: 'var(--sp-text-tertiary)' }}>
+                    {infoBarText}
+                  </p>
+                )}
+                <button
+                  onClick={clearBrush}
+                  className="text-[10px] font-sans ml-3 flex-shrink-0 transition-colors underline"
+                  style={{ color: 'var(--sp-text-tertiary)' }}
+                  aria-label="Clear brush selection"
+                  title="Clear brush selection"
+                >
+                  Clear selection
+                </button>
+              </div>
             )}
           </div>
 

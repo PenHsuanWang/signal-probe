@@ -60,6 +60,28 @@ function extractApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Extract a human-readable error message for spectrogram generation failures.
+ *
+ * Overrides generic envelope messages with SRS-specified user-facing text for
+ * known HTTP status codes, then falls back to the general extractor.
+ *
+ * - 413: payload too large  → guide user to increase overlap / reduce window_size
+ * - 422: validation error   → signal too short for the chosen window_size
+ */
+function extractSpectrogramError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const status = (err as AxiosError).response?.status;
+    if (status === 413) {
+      return 'Spectrogram too large — try increasing the overlap (lower hop_size) or reducing window size';
+    }
+    if (status === 422) {
+      return 'Signal is too short for the selected window size. Reduce window size and try again.';
+    }
+  }
+  return extractApiError(err, 'Spectrogram generation failed');
+}
+
 // ── State shape ───────────────────────────────────────────────────────────────
 
 export interface STFTExplorerState {
@@ -289,6 +311,17 @@ export function useSTFTExplorer(
         fftAbort.current = null;
       }
 
+      // Guard: fewer than 4 samples is insufficient for an FFT. Show an inline
+      // warning in the FFT panel without dispatching any API call.
+      const earlyCount = Math.round((endS - startS) * samplingRateRef.current);
+      if (earlyCount < 4) {
+        dispatch({
+          type: 'FFT_ERROR',
+          error: 'Selection too short — at least 4 samples required for FFT',
+        });
+        return;
+      }
+
       debounceTimer.current = setTimeout(async () => {
         debounceTimer.current = null;
         const channel = explicitChannel ?? channelRef.current;
@@ -391,7 +424,7 @@ export function useSTFTExplorer(
         if (err instanceof Error && err.name === 'AbortError') return;
         dispatch({
           type: 'SPECTROGRAM_ERROR',
-          error: extractApiError(err, 'Spectrogram generation failed'),
+          error: extractSpectrogramError(err),
         });
       });
   }, [signalId, state.lockedWindowSize, state.overlapPct, state.window]);
