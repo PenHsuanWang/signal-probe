@@ -340,6 +340,73 @@ class TestNumericalAccuracy:
         freq_resolution = sr / 1024  # ≈ 1.95 Hz/bin
         assert abs(result.dominant_frequency_hz - freq) <= freq_resolution + 1e-6
 
+    def test_stft_amplitude_calibration_flattop(self):
+        """Flat-top window recovers near-exact amplitude for non-bin-aligned tones.
+
+        The flat-top window is designed specifically for accurate amplitude
+        measurement: its wide main lobe captures all energy from nearby bins,
+        giving amplitude error < 1% even when the true frequency falls between
+        FFT bins.  This test verifies the full normalisation pipeline:
+          |rfft| / N * 2 (one-sided) / coherent_gain.
+        """
+        sr = 1024.0  # power-of-2 rate so bin_width = 1 Hz/bin
+        freq = 123.7  # non-bin-aligned (123.7 Hz falls between bins 123 and 124)
+        A = 3.5
+        N = 1024
+        signal = _make_sine(freq, duration_s=N / sr, sampling_rate_hz=sr, amplitude=A)
+        config = STFTWindowConfig(
+            start_s=0.0,
+            end_s=N / sr,
+            window_fn=WindowFunction.flattop,
+            window_size=N,
+        )
+        result = compute_stft(signal, sr, config)
+        peak_mag = float(np.max(result.magnitudes))
+        # Flat-top window guarantees < 1% amplitude error for any frequency.
+        assert (
+            abs(peak_mag - A) / A < 0.01
+        ), f"Amplitude calibration failed: expected ~{A}, got {peak_mag:.4f}"
+
+    def test_stft_amplitude_cross_window_size_consistency(self):
+        """Amplitude at peak bin is independent of window_size (linearity check).
+
+        After normalisation, doubling the window size must not change the
+        reported peak magnitude for the same underlying signal.
+        Choose sr=2048, freq=128 so the tone is bin-aligned for both sizes:
+          N=512:  bin = 128 * 512 / 2048 = 32  (exact)
+          N=1024: bin = 128 * 1024 / 2048 = 64 (exact)
+        """
+        sr2 = 2048.0
+        freq2 = 128.0
+        A = 4.0
+        signal = _make_sine(freq2, duration_s=1.0, sampling_rate_hz=sr2, amplitude=A)
+        r512 = compute_stft(
+            signal,
+            sr2,
+            STFTWindowConfig(
+                start_s=0.0,
+                end_s=1.0,
+                window_fn=WindowFunction.hann,
+                window_size=512,
+            ),
+        )
+        r1024 = compute_stft(
+            signal,
+            sr2,
+            STFTWindowConfig(
+                start_s=0.0,
+                end_s=1.0,
+                window_fn=WindowFunction.hann,
+                window_size=1024,
+            ),
+        )
+        # Both window sizes should recover the same amplitude within leakage tolerance.
+        np.testing.assert_allclose(
+            np.max(r512.magnitudes),
+            np.max(r1024.magnitudes),
+            rtol=0.05,  # 5% tolerance — residual spectral leakage is acceptable
+        )
+
 
 # ── Windowed spectrogram (t_start offset) ─────────────────────────────────────
 

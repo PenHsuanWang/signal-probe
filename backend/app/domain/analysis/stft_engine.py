@@ -108,7 +108,28 @@ def compute_stft(
 
     spectrum = _scipy_fft.rfft(windowed, workers=-1)
     freqs = _scipy_fft.rfftfreq(size, d=1.0 / sampling_rate_hz)
-    mags = np.abs(spectrum)
+
+    # Amplitude-calibrated one-sided magnitude spectrum.
+    #
+    # scipy.fft.rfft uses the unnormalised convention: X[k] = Σ x[n]·W^nk,
+    # so |X[k₀]| = A·N/2 for a sine of amplitude A at an exact bin frequency.
+    # Three corrections restore the physical amplitude A:
+    #
+    #   1. Divide by N           — remove the DFT summation scale
+    #   2. Multiply bins 1..N/2-1 by 2  — recover energy from the discarded
+    #                               negative-frequency mirror (DC and Nyquist
+    #                               have no mirror, so they are left as-is)
+    #   3. Divide by coherent gain — compensate for the amplitude attenuation
+    #                               introduced by the window function
+    #                               (Hann≈0.50, Hamming≈0.54, boxcar=1.0, …)
+    #
+    # After these corrections the y-axis represents signal amplitude in the
+    # same units as the input (e.g. volts, m/s², g), enabling valid comparisons
+    # across different window sizes and window functions.
+    mags = np.abs(spectrum) / size
+    mags[1:-1] *= 2.0
+    coherent_gain = float(win.sum()) / size
+    mags /= coherent_gain
 
     dominant = float(freqs[int(np.argmax(mags))]) if mags.max() > 0 else None
 
