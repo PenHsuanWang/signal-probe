@@ -48,9 +48,21 @@ export default function SpectrogramChart({
 
     const xValues = result.time_bins_s.map((s) => toX(s));
 
+    // Backend returns magnitude_db with shape (n_time, n_freq):
+    //   magnitude_db[t][f] = dBFS at time-bin t, frequency-bin f
+    //
+    // Plotly heatmap convention: z[i][j] is plotted at (x[j], y[i]),
+    // meaning the OUTER dimension maps to y (rows) and INNER to x (columns).
+    // With x = time_bins (n_time) and y = freq_bins (n_freq), Plotly needs
+    // z to have shape (n_freq, n_time) so that z[f][t] maps to (x[t], y[f]).
+    // We transpose here to match that expectation.
+    const zT = result.frequency_bins_hz.map((_, fIdx) =>
+      result.magnitude_db.map((row) => row[fIdx]),
+    );
+
     return [
       {
-        z: result.magnitude_db,
+        z: zT,
         x: xValues,
         y: result.frequency_bins_hz,
         type: 'heatmap',
@@ -64,7 +76,7 @@ export default function SpectrogramChart({
         },
         hovertemplate:
           (effectiveT0 == null ? 'Time: %{x:.3f} s' : 'Time: %{x}') +
-          '<br>Freq: %{y:.2f} Hz<br>%{z:.1f} dBFS<extra></extra>',
+          `<br>Freq: %{y:.2f} Hz<br>%{z:.1f} dBFS<extra></extra>`,
       } as Plotly.Data,
     ];
   }, [result, toX, axisColor, effectiveT0]);
