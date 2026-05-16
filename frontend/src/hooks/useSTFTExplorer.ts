@@ -215,7 +215,9 @@ export function useSTFTExplorer(
   const spectrogramAbort = useRef<AbortController | null>(null);
 
   // Latest-value refs for use inside async closures (avoid stale state)
-  const channelRef = useRef<string | null>(null);
+  // Initialize to initialChannel so the first debounced FFT closure always has
+  // a valid channel even before the first useEffect commit (which syncs this ref).
+  const channelRef = useRef<string | null>(initialChannel ?? null);
   const windowFnRef = useRef<WindowFunction>('hann');
   useEffect(() => {
     channelRef.current = state.channel;

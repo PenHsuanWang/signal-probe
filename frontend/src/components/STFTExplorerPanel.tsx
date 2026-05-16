@@ -319,9 +319,12 @@ export default function STFTExplorerPanel({
           </div>
 
           {/* FFT Spectrum + Param Controls side by side */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* items-start prevents CSS grid from stretching both cells to the same
+              height, which would cause the Plotly flex:1 Plot to grow whenever the
+              right-hand param panel reflows (overlap slider / window count text). */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
             <div
-              className="rounded p-3 min-h-[220px]"
+              className="rounded p-3 min-h-[220px] max-h-[420px]"
               style={{ background: 'var(--sp-surface-primary)', border: '1px solid var(--sp-border)' }}
             >
               <h3 className="text-[10px] font-sans font-semibold uppercase tracking-wide mb-2"
