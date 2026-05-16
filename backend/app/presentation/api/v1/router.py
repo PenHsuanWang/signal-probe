@@ -1,10 +1,18 @@
 from fastapi import APIRouter
 
-from app.presentation.api.v1.endpoints import analysis, auth, groups, signals, users
+from app.presentation.api.v1.endpoints import (
+    analysis,
+    auth,
+    groups,
+    lot_events,
+    signals,
+    users,
+)
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(signals.router, prefix="/signals", tags=["signals"])
 api_router.include_router(analysis.router, prefix="/signals", tags=["analysis"])
+api_router.include_router(lot_events.router, prefix="/signals", tags=["lot-events"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])

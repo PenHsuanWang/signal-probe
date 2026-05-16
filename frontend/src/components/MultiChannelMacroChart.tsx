@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { Plot } from '../lib/plot';
-import type { MacroViewResponse, RunBound } from '../types/signal';
+import type { LotEvent, MacroViewResponse, RunBound } from '../types/signal';
 import { buildChartTheme } from '../lib/chartTheme';
 import type { Theme } from '../context/ThemeContext';
 
@@ -17,6 +17,8 @@ interface Props {
   visibleChannels: Set<string>;
   theme: Theme;
   onRelayout: (event: Plotly.PlotRelayoutEvent) => void;
+  /** Optional lot events to overlay as dashed check-in/check-out markers. */
+  lotEvents?: LotEvent[];
 }
 
 /**
@@ -31,7 +33,7 @@ interface Props {
  * values are converted to ISO date strings so that Plotly renders actual
  * calendar dates and times.  Otherwise elapsed seconds are shown.
  */
-export default function MultiChannelMacroChart({ macro, visibleChannels, theme, onRelayout }: Props) {
+export default function MultiChannelMacroChart({ macro, visibleChannels, theme, onRelayout, lotEvents = [] }: Props) {
   const hasDateAxis = macro.t0_epoch_s != null;
 
   const channels = useMemo(
@@ -92,6 +94,67 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
       }))
     );
 
+    // Lot-event overlay: shaded window + dashed check-in / check-out lines.
+    const lotColor = 'rgba(249,115,22,0.85)'; // orange-500
+    const lotFill = 'rgba(249,115,22,0.06)';
+    const lotToX = (epochS: number): number | string =>
+      toXValue(hasDateAxis ? epochS - macro.t0_epoch_s! : epochS);
+
+    const lotShapes: Partial<Plotly.Shape>[] = lotEvents.flatMap((lot) => [
+      // Shaded window between check-in and check-out
+      {
+        type: 'rect' as const,
+        xref: 'x' as const,
+        yref: 'paper' as const,
+        x0: lotToX(lot.check_in_time),
+        x1: lotToX(lot.check_out_time),
+        y0: 0, y1: 1,
+        fillcolor: lotFill,
+        line: { width: 0 },
+        layer: 'below' as const,
+      },
+      // Check-in dashed line
+      {
+        type: 'line' as const,
+        xref: 'x' as const,
+        yref: 'paper' as const,
+        x0: lotToX(lot.check_in_time),
+        x1: lotToX(lot.check_in_time),
+        y0: 0, y1: 1,
+        line: { color: lotColor, width: 1.5, dash: 'dash' as const },
+      },
+      // Check-out dashed line
+      {
+        type: 'line' as const,
+        xref: 'x' as const,
+        yref: 'paper' as const,
+        x0: lotToX(lot.check_out_time),
+        x1: lotToX(lot.check_out_time),
+        y0: 0, y1: 1,
+        line: { color: lotColor, width: 1, dash: 'dot' as const },
+      },
+    ]);
+
+    const lotAnnotations: Partial<Plotly.Annotations>[] = lotEvents.map((lot) => ({
+      text: `${lot.lot_id}<br><span style="font-size:8px">${lot.recipe} · n=${lot.wafer_count}</span>`,
+      x: lotToX(lot.check_in_time),
+      y: 0.98,
+      xref: 'x' as const,
+      yref: 'paper' as const,
+      xanchor: 'left' as const,
+      yanchor: 'top' as const,
+      showarrow: false,
+      bgcolor: 'rgba(249,115,22,0.18)',
+      bordercolor: lotColor,
+      borderwidth: 1,
+      borderpad: 3,
+      font: {
+        size: 9,
+        family: 'Inter, ui-sans-serif, sans-serif',
+        color: lotColor,
+      },
+    }));
+
     // Thin solid border drawn around each panel's paper-space bounding box.
     const borderColor = isLight ? '#1a1a1a' : '#4b5563';
     const borderShapes: Partial<Plotly.Shape>[] = channels.map((_, i) => ({
@@ -131,8 +194,8 @@ export default function MultiChannelMacroChart({ macro, visibleChannels, theme, 
     const l: Record<string, any> = {
       ...base,
       margin: { t: 8, r: 16, l: 56, b: 60 },
-      shapes: [...borderShapes, ...innerShapes],
-      annotations,
+      shapes: [...borderShapes, ...innerShapes, ...lotShapes],
+      annotations: [...annotations, ...lotAnnotations],
       xaxis: {
         ...base.xaxis,
         domain: [0, 1],

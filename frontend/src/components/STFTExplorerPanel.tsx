@@ -139,6 +139,12 @@ export default function STFTExplorerPanel({
       margin: { t: 8, r: 12, l: 52, b: 44 },
       shapes: brushShape as Plotly.Shape[],
       selectdirection: 'h',
+      // Explicitly reset Plotly's internal selection state on every re-render.
+      // Without this, Plotly keeps `selections: [...]` in its internal layout
+      // from a previous box-select, then when Plotly.react() is called with a
+      // layout that omits `selections`, Plotly tries to reconcile via relayout
+      // producing "unrecognized GUI edit: selections[0].*" console warnings.
+      selections: [],
       xaxis: {
         ...(hasDateAxis ? { type: 'date' } : {}),
         color: axisColor,

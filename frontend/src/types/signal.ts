@@ -213,3 +213,53 @@ export type ExplorationPhase =
   | 'locked'
   | 'generating'
   | 'spectrogram_ready';
+
+// ── Lot Events ───────────────────────────────────────────────────────────────
+
+export interface LotEvent {
+  id: string;
+  signal_id: string;
+  lot_id: string;
+  recipe: string;
+  wafer_count: number;
+  /** Unix epoch seconds */
+  check_in_time: number;
+  /** Unix epoch seconds */
+  check_out_time: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LotEventCreateRequest {
+  lot_id: string;
+  recipe: string;
+  wafer_count: number;
+  /** Unix epoch seconds */
+  check_in_time: number;
+  /** Unix epoch seconds */
+  check_out_time: number;
+}
+
+export interface LotEventUpdateRequest {
+  recipe?: string;
+  wafer_count?: number;
+  check_in_time?: number;
+  check_out_time?: number;
+}
+
+export interface RowError {
+  row: number;
+  lot_id: string | null;
+  reason: string;
+}
+
+export interface BulkImportResult {
+  imported: number;
+  skipped: number;
+  errors: RowError[];
+}
+
+/** MacroViewResponse sliced to a lot's time window, with lot metadata attached. */
+export interface LotSliceResponse extends MacroViewResponse {
+  lot_event: LotEvent;
+}

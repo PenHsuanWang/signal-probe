@@ -39,6 +39,7 @@ const MOCK_SPECTROGRAM_RESPONSE: SpectrogramResponse = {
   magnitude_db: [[-10, -5, -20], [-12, -6, -18]],
   sampling_rate_hz: 1000,
   downsampled: false,
+  t0_epoch_s: null,
 };
 
 let getSpy: ReturnType<typeof vi.spyOn>;

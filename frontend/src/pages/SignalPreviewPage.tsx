@@ -4,8 +4,11 @@ import { Plot } from '../lib/plot';
 import { Activity, Waves } from 'lucide-react';
 import MicroChart from '../components/MicroChart';
 import MultiChannelMacroChart from '../components/MultiChannelMacroChart';
+import LotEventPanel from '../components/LotEventPanel';
+import LotSliceModal from '../components/LotSliceModal';
 import { useMacroView } from '../hooks/useMacroView';
 import { useRunChunks } from '../hooks/useRunChunks';
+import { useLotEvents } from '../hooks/useLotEvents';
 import { useSignals } from '../context/SignalsContext';
 import { useTheme } from '../context/ThemeContext';
 import { buildChartTheme, scientificColor, OOC_MARKER } from '../lib/chartTheme';
@@ -38,6 +41,10 @@ export default function SignalPreviewPage() {
   // ── Data hooks ────────────────────────────────────────────────────────────
   const { macroData, loading: loadingMacro, error: macroError, retry } = useMacroView(signalId ?? null);
   const { runChunks, loading: loadingRuns, error: runError } = useRunChunks(signalId ?? null, xRange, macroData);
+  const { events: lotEvents, loading: loadingLots, error: lotError, create: addLot, remove: deleteLot, uploadCsv } = useLotEvents(signalId ?? null);
+
+  // ── Lot slice modal state ─────────────────────────────────────────────────
+  const [sliceLotId, setSliceLotId] = useState<string | null>(null);
 
   // ── Local UI state ────────────────────────────────────────────────────────
   const [visibleChannels, setVisibleChannels] = useState<Set<string>>(new Set());
@@ -250,6 +257,7 @@ export default function SignalPreviewPage() {
               visibleChannels={visibleChannels}
               theme={theme}
               onRelayout={handleMacroRelayout}
+              lotEvents={lotEvents}
             />
           ) : (
             <Plot data={macroTraces} layout={macroLayout} useResizeHandler
@@ -295,6 +303,28 @@ export default function SignalPreviewPage() {
         <div className="flex items-center justify-center py-4 font-sans text-xs text-red-400">
           ⚠ Could not load run data — drag the range slider again to retry.
         </div>
+      )}
+
+      {/* Lot Event Panel */}
+      {signalId && (
+        <LotEventPanel
+          events={lotEvents}
+          loading={loadingLots}
+          error={lotError}
+          onAdd={addLot}
+          onDelete={deleteLot}
+          onUploadCsv={uploadCsv}
+          onViewSlice={(lotId) => setSliceLotId(lotId)}
+        />
+      )}
+
+      {/* Lot Slice Modal */}
+      {signalId && sliceLotId && (
+        <LotSliceModal
+          signalId={signalId}
+          lotId={sliceLotId}
+          onClose={() => setSliceLotId(null)}
+        />
       )}
     </div>
   );

@@ -21,6 +21,18 @@ export function nextPowerOfTwo(n: number): number {
 }
 
 /**
+ * Returns the largest power of two <= n, with a minimum of 4.
+ * Used for spectrogram window size so the window always fits within
+ * the available sample count (prevents 422 "too few samples" errors).
+ */
+export function prevPowerOfTwo(n: number): number {
+  if (n <= 4) return 4;
+  let p = 4;
+  while (p * 2 <= n) p <<= 1;
+  return Math.min(p, 131072);
+}
+
+/**
  * Extract a human-readable error message from an unknown thrown value.
  *
  * Priority:
@@ -336,14 +348,20 @@ export function useSTFTExplorer(
   const generateSpectrogram = useCallback(() => {
     const channel = channelRef.current;
     const lockedWs = state.lockedWindowSize;
-    if (!channel || !lockedWs) return;
+    if (!channel || !lockedWs || !state.window) return;
 
     if (spectrogramAbort.current) {
       spectrogramAbort.current.abort();
       spectrogramAbort.current = null;
     }
 
-    const ws = lockedWs;
+    // Clamp window_size to the largest power-of-2 that fits within the
+    // estimated sample count.  Without this, nextPowerOfTwo can round UP
+    // beyond the actual samples in the selected range, causing a 422.
+    const estimatedSamples = Math.round(
+      (state.window.end_s - state.window.start_s) * samplingRateRef.current,
+    );
+    const ws = Math.min(lockedWs, prevPowerOfTwo(Math.max(4, estimatedSamples)));
     const hs = Math.max(1, Math.round(ws * (1 - state.overlapPct / 100)));
     const wfn = windowFnRef.current;
 
