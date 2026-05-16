@@ -157,6 +157,7 @@ export default function STFTParamControls({
         <button
           disabled={!canGenerate}
           onClick={onGenerateSpectrogram}
+          title={!canGenerate ? 'Lock a window size first by exploring a time window above' : undefined}
           className={`w-full py-2 rounded text-xs font-sans font-semibold flex items-center justify-center gap-2 transition-colors
             ${canGenerate
               ? 'bg-green-600 hover:bg-green-500 text-white'
@@ -164,6 +165,7 @@ export default function STFTParamControls({
             }`}
           style={!canGenerate ? { background: 'var(--sp-surface-elevated)' } : {}}
           aria-label="Generate spectrogram"
+          aria-disabled={!canGenerate}
         >
           {spectrogramLoading ? (
             <span className="animate-spin text-base leading-none">⊙</span>

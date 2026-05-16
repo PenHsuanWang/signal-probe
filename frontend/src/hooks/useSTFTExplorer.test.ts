@@ -344,10 +344,10 @@ describe('generateSpectrogram — error message extraction', () => {
     vi.resetAllMocks();
   });
 
-  it('surfaces backend error envelope message on 422 response', async () => {
-    // Simulate an AxiosError whose response body uses the backend error envelope.
-    // axios.isAxiosError() checks `value?.isAxiosError === true`, so we set
-    // that property on a plain object — no mocking of axios needed.
+  it('shows SRS user-friendly message on 422 (signal too short)', async () => {
+    // Simulate an AxiosError with a 422 status code.
+    // extractSpectrogramError should return the SRS-specified message, not
+    // the backend envelope body, so the user sees actionable guidance.
     const axiosLike = {
       isAxiosError: true as const,
       response: {
@@ -380,7 +380,106 @@ describe('generateSpectrogram — error message extraction', () => {
       expect(result.current.state.spectrogramError).not.toBeNull();
     });
 
-    expect(result.current.state.spectrogramError).toContain('window_size (512)');
+    expect(result.current.state.spectrogramError).toContain('Signal is too short for the selected window size');
     expect(result.current.state.phase).toBe('locked');
+  });
+
+  it('shows SRS user-friendly message on 413 (payload too large)', async () => {
+    const axiosLike = {
+      isAxiosError: true as const,
+      response: {
+        status: 413,
+        data: {},
+      },
+      message: 'Request failed with status code 413',
+      name: 'AxiosError',
+    };
+
+    mockFetchSpectrogram.mockRejectedValueOnce(axiosLike);
+
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    act(() => { result.current.handleBrushSelect(50.0, 100.0, 'ch1'); });
+    await waitFor(() => expect(result.current.state.fftResult).not.toBeNull());
+    act(() => { result.current.lockWindow(); });
+    act(() => { result.current.generateSpectrogram(); });
+
+    await waitFor(() => {
+      expect(result.current.state.spectrogramError).not.toBeNull();
+    });
+
+    expect(result.current.state.spectrogramError).toContain('Spectrogram too large');
+    expect(result.current.state.spectrogramError).toContain('hop_size');
+    expect(result.current.state.phase).toBe('locked');
+  });
+});
+
+// ── handleBrushSelect — < 4 samples guard (US-1.1 Scenario 2) ─────────────────
+
+describe('handleBrushSelect — too-short guard', () => {
+  beforeEach(() => {
+    mockFetchSTFT.mockResolvedValue(MOCK_FFT_RESULT);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('does NOT call fetchSTFT and sets fftError when sample count < 4', async () => {
+    // MOCK_MACRO_X has 1001 points over [0, 1] s → sampling rate ≈ 1000 Hz.
+    // A brush of 0.001 s gives ~1 sample (< 4), so the guard must fire.
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    act(() => {
+      result.current.handleBrushSelect(0.0, 0.001, 'ch1');
+    });
+
+    // fftError must be set synchronously (no debounce for guard path).
+    await waitFor(() => {
+      expect(result.current.state.fftError).not.toBeNull();
+    });
+
+    expect(result.current.state.fftError).toContain('at least 4 samples required');
+    expect(mockFetchSTFT).not.toHaveBeenCalled();
+    expect(result.current.state.fftLoading).toBe(false);
+  });
+
+  it('brush window is still stored in state even when too short', async () => {
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    act(() => {
+      result.current.handleBrushSelect(0.5, 0.501, 'ch1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.fftError).not.toBeNull();
+    });
+
+    // The window is saved so the info bar can render the duration.
+    expect(result.current.state.window).toEqual({ start_s: 0.5, end_s: 0.501 });
+  });
+
+  it('calls fetchSTFT normally when sample count >= 4', async () => {
+    // 0 to 0.1 s at ~1000 Hz = 100 samples → well above threshold
+    const { result } = renderHook(() =>
+      useSTFTExplorer('sig-1', MOCK_MACRO_X, 'ch1'),
+    );
+
+    act(() => {
+      result.current.handleBrushSelect(0.0, 0.1, 'ch1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.fftResult).not.toBeNull();
+    });
+
+    expect(mockFetchSTFT).toHaveBeenCalledOnce();
+    expect(result.current.state.fftError).toBeNull();
   });
 });
